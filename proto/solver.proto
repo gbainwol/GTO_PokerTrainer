@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package pokertrainer;
+
+service SolverService {
+  rpc StartJob (StartJobRequest) returns (JobResponse);
+  rpc JobStatus (JobStatusRequest) returns (JobResponse);
+  rpc ResumeJob (ResumeJobRequest) returns (JobResponse);
+}
+
+message StartJobRequest {
+  int32 num_players = 1;
+  int32 iterations = 2;
+  string mode = 3;
+  bool discounted = 4;
+  bool use_gpu = 5;
+  double starting_stack = 6;
+  double open_size = 7;
+  double raise_size = 8;
+  double call_size = 9;
+}
+
+message JobStatusRequest {
+  string job_id = 1;
+}
+
+message ResumeJobRequest {
+  string job_id = 1;
+  int32 extra_iterations = 2;
+}
+
+message JobResponse {
+  string job_id = 1;
+  string status = 2;
+  string mode = 3;
+  int32 iterations = 4;
+  int32 completed = 5;
+  double result = 6;
+  string checkpoint = 7;
+}
