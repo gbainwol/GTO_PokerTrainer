@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Experiment Harness</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div>
+          <h1>Experiment Harness</h1>
+          <p class="subtitle">Toggle feature flags, pick variants, and view instrumentation.</p>
+        </div>
+        <a class="link" href="./index.html">Back to app</a>
+      </header>
+
+      <div class="harness-grid">
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Feature Flags</h2>
+              <p class="muted">Local overrides (persisted in browser)</p>
+            </div>
+          </div>
+          <div id="flag-controls"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>A/B Assignment</h2>
+              <p class="muted">Pick a variant and log assignment</p>
+            </div>
+          </div>
+          <div class="options">
+            <button data-variant="control">Control</button>
+            <button data-variant="variant-b" class="primary">Variant B</button>
+            <button data-variant="variant-c" class="secondary">Variant C</button>
+          </div>
+          <p class="muted">Use <code>?variant=variant-b</code> query param on <a class="link" href="./index.html">index</a>.</p>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Assignments</h2>
+              <p class="muted">Latest 10</p>
+            </div>
+          </div>
+          <ul id="assignment-log" class="list"></ul>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Events</h2>
+              <p class="muted">Latest 10</p>
+            </div>
+          </div>
+          <ul id="event-log" class="list"></ul>
+        </section>
+      </div>
+    </div>
+
+    <script type="module" src="./harness.js"></script>
+  </body>
+</html>

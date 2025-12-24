@@ -1,0 +1,171 @@
+:root {
+  color-scheme: light dark;
+  --bg: #0e0f1a;
+  --card: #191b2b;
+  --border: #2a2d45;
+  --text: #f2f3ff;
+  --muted: #9ca6c0;
+  --accent: #7be0a3;
+  --secondary: #5bb8ff;
+  --danger: #ff7b7b;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 24px;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: radial-gradient(circle at 20% 20%, #121528 0, #0b0c16 50%);
+  color: var(--text);
+}
+
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin-top: -8px;
+}
+
+.variant-pill {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.status {
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  min-width: 120px;
+  text-align: center;
+}
+
+.options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.options.variant-new {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.options button {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 12px;
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.options button:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+
+.options button:active {
+  transform: translateY(0);
+}
+
+.options .primary {
+  background: linear-gradient(120deg, #2dce89, #22bdb3);
+  border-color: transparent;
+  color: #0a0b12;
+}
+
+.options .secondary {
+  background: linear-gradient(120deg, #6cc7ff, #5f9dff);
+  border-color: transparent;
+  color: #0a0b12;
+}
+
+.options .ghost {
+  background: transparent;
+}
+
+.options.enhanced {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+}
+
+.code {
+  background: #0c0d18;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 13px;
+  overflow: auto;
+  max-height: 220px;
+  color: var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+
+.link {
+  color: var(--secondary);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.harness-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  max-height: 260px;
+  overflow: auto;
+}

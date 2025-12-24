@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Poker Trainer Experiment Harness</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app" class="page">
+      <header class="header">
+        <div>
+          <h1>Poker Trainer</h1>
+          <p class="subtitle">Experiment-ready UI with instrumentation</p>
+        </div>
+        <div class="variant-pill">Variant: <span id="variant-name">control</span></div>
+      </header>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>Session Controls</h2>
+            <p class="muted">Feature flags & A/B variants govern this view.</p>
+          </div>
+          <div class="status" id="status">Idle</div>
+        </div>
+        <div id="options-block" class="options">
+          <button id="start-session" class="primary">Start Session</button>
+          <button data-option="check" class="ghost">Check</button>
+          <button data-option="bet" class="ghost">Bet</button>
+          <button id="complete-hand" class="secondary">Complete Hand</button>
+        </div>
+        <div id="enhanced-options" class="options enhanced">
+          <button data-option="call">Call</button>
+          <button data-option="raise">Raise</button>
+          <button data-option="fold">Fold</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>Debug</h2>
+            <p class="muted">Active flags and remote snapshot</p>
+          </div>
+          <a class="link" href="./harness.html">Open A/B Harness</a>
+        </div>
+        <pre id="flag-readout" class="code">{}</pre>
+      </section>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
