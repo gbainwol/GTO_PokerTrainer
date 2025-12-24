@@ -1,0 +1,64 @@
+{
+  "packs": [
+    {
+      "name": "Cash Fundamentals",
+      "description": "Starter drills that pair micro-stake cash ranges with balanced sizing trees.",
+      "drills": [
+        {
+          "name": "SRP BTN vs BB",
+          "spots": ["BTN open", "BB defend"],
+          "preset": "Cash 100NL - Balanced",
+          "range_variant": "cash",
+          "range_version": "v1.0.0"
+        },
+        {
+          "name": "3BP CO vs BTN",
+          "spots": ["CO 3-bet", "BTN call"],
+          "preset": "Cash 100NL - Balanced",
+          "range_variant": "cash",
+          "range_version": "v1.0.0"
+        }
+      ]
+    },
+    {
+      "name": "MTT Day 2",
+      "description": "Late-stage MTT spots with ICM-leaning sizings and mid-stack ranges.",
+      "drills": [
+        {
+          "name": "HJ vs BB 40bb",
+          "spots": ["HJ open", "BB defend"],
+          "preset": "MTT 60bb - Ladder Safe",
+          "range_variant": "mtt",
+          "range_version": "v1.0.0"
+        },
+        {
+          "name": "BTN vs SB 30bb",
+          "spots": ["BTN open", "SB 3-bet"],
+          "preset": "MTT 60bb - Ladder Safe",
+          "range_variant": "mtt",
+          "range_version": "v1.0.0"
+        }
+      ]
+    },
+    {
+      "name": "ICM Final Table",
+      "description": "Bubble-guarded drills tuned for pay-jump pressure and capped rivers.",
+      "drills": [
+        {
+          "name": "FT BTN vs BB 20bb",
+          "spots": ["BTN shove/call", "BB reshove"],
+          "preset": "ICM Final Table - Bubble Guard",
+          "range_variant": "icm",
+          "range_version": "v1.0.0"
+        },
+        {
+          "name": "FT SB vs BB 15bb",
+          "spots": ["SB limp", "BB iso"],
+          "preset": "ICM Final Table - Bubble Guard",
+          "range_variant": "icm",
+          "range_version": "v1.0.0"
+        }
+      ]
+    }
+  ]
+}

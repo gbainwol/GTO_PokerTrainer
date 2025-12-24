@@ -1,0 +1,12 @@
+{
+  "variant": "cash",
+  "version": "v1.0.0",
+  "description": "6-max 100bb cash ranges for BTN vs BB.",
+  "source": "builtin",
+  "tags": ["cash", "btn", "bb", "100bb"],
+  "hands": [
+    {"position": "BTN", "action": "open", "combo": "A5s", "frequency": 0.65},
+    {"position": "BTN", "action": "open", "combo": "KQo", "frequency": 0.52},
+    {"position": "BB", "action": "defend", "combo": "A9o", "frequency": 0.31}
+  ]
+}

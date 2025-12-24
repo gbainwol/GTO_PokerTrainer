@@ -1,0 +1,12 @@
+{
+  "variant": "icm",
+  "version": "v1.0.0",
+  "description": "Final table ICM ranges for 20bb BTN vs BB shove/call.",
+  "source": "builtin",
+  "tags": ["icm", "ft", "20bb"],
+  "hands": [
+    {"position": "BTN", "action": "shove", "combo": "A2s", "frequency": 0.74},
+    {"position": "BTN", "action": "shove", "combo": "K9o", "frequency": 0.41},
+    {"position": "BB", "action": "call", "combo": "77", "frequency": 0.65}
+  ]
+}

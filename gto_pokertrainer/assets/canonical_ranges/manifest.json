@@ -1,0 +1,35 @@
+{
+  "cash": {
+    "v1.0.0": {
+      "variant": "cash",
+      "version": "v1.0.0",
+      "path": "canonical_ranges/cash/v1.0.0/range.json",
+      "description": "6-max 100bb cash ranges for BTN vs BB.",
+      "source": "builtin",
+      "tags": ["cash", "btn", "bb", "100bb"],
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  },
+  "mtt": {
+    "v1.0.0": {
+      "variant": "mtt",
+      "version": "v1.0.0",
+      "path": "canonical_ranges/mtt/v1.0.0/range.json",
+      "description": "Mid-stage MTT ranges for 40bb CO vs BTN 3bp.",
+      "source": "builtin",
+      "tags": ["mtt", "3bp", "40bb"],
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  },
+  "icm": {
+    "v1.0.0": {
+      "variant": "icm",
+      "version": "v1.0.0",
+      "path": "canonical_ranges/icm/v1.0.0/range.json",
+      "description": "Final table ICM ranges for 20bb BTN vs BB shove/call.",
+      "source": "builtin",
+      "tags": ["icm", "ft", "20bb"],
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  }
+}

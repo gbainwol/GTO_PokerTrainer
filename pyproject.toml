@@ -1,0 +1,11 @@
+[project]
+name = "gto_pokertrainer"
+version = "0.1.0"
+description = "Range ingestion, betting presets, and localization scaffolding for a poker trainer."
+authors = [{ name = "Poker Trainer Team" }]
+requires-python = ">=3.10"
+readme = "README.md"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

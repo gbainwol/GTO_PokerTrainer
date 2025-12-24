@@ -1,0 +1,5 @@
+{
+  "usd": {"symbol": "$", "precision": 2, "locale": "en"},
+  "eur": {"symbol": "€", "precision": 2, "locale": "de"},
+  "gbp": {"symbol": "£", "precision": 2, "locale": "en"}
+}

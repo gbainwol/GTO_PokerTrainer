@@ -1,0 +1,12 @@
+{
+  "variant": "mtt",
+  "version": "v1.0.0",
+  "description": "Mid-stage MTT ranges for 40bb CO vs BTN 3bp.",
+  "source": "builtin",
+  "tags": ["mtt", "3bp", "40bb"],
+  "hands": [
+    {"position": "CO", "action": "3bet", "combo": "QQ", "frequency": 0.98},
+    {"position": "CO", "action": "3bet", "combo": "AJo", "frequency": 0.56},
+    {"position": "BTN", "action": "call", "combo": "A5s", "frequency": 0.62}
+  ]
+}
