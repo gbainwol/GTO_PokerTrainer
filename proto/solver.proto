@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package gto;
+
+message SolveRequest {
+  int32 iterations = 1;
+  string mode = 2;
+}
+
+message SolveResponse {
+  string job_id = 1;
+  string status = 2;
+}
+
+message StatusRequest {
+  string job_id = 1;
+}
+
+message StatusResponse {
+  string job_id = 1;
+  string status = 2;
+  int32 iterations = 3;
+  double elapsed_seconds = 4;
+}
+
+service Solver {
+  rpc Solve (SolveRequest) returns (SolveResponse);
+  rpc Status (StatusRequest) returns (StatusResponse);
+  rpc Resume (SolveRequest) returns (SolveResponse);
+}

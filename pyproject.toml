@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gto-pokertrainer"
+version = "0.1.0"
+description = "CFR+/DCFR poker training scaffold with service endpoints"
+authors = [{name = "GTO PokerTrainer Team"}]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.25",
+    "grpcio>=1.59",
+    "grpcio-tools>=1.59",
+    "pydantic>=2.5",
+    "numpy>=1.26",
+    "tqdm>=4.66"
+]
+
+[project.optional-dependencies]
+tests = [
+    "pytest>=7.4"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
