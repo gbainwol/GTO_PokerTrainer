@@ -2729,7 +2729,6 @@ const App = () => {
                     </p>
                   )}
                 </div>
-              </div>
             </div>
           </section>
         ) : null}
