@@ -252,7 +252,7 @@ const TOURNAMENT_FORMATS = [
  * remote service is a hand-strength heuristic regardless of what was selected.
  */
 const SOLVER_ENGINES = [
-  "CFR+ (local, exact river)",
+  "CFR+ (local: exact turn/river, sampled flop)",
   "Heuristic (remote service)",
 ];
 
@@ -1491,10 +1491,11 @@ const App = () => {
   /**
    * Ask for a strategy in the current spot.
    *
-   * On a complete board this runs the local CFR+ solver, which returns a real
-   * equilibrium mix plus the exploitability of the solve. Earlier streets still
-   * go to the remote service, which is a hand-strength heuristic rather than
-   * a solver - it now reports itself as such.
+   * From the flop onward this runs the local CFR+ solver, which returns a real
+   * equilibrium mix plus the exploitability of the solve. Turn and river are
+   * solved exactly; a flop solve samples runouts and says so. Preflop still
+   * goes to the remote service, which is a hand-strength heuristic rather than
+   * a solver - it reports itself as such.
    */
   const requestSolverAdvice = async () => {
     const heroPlayer = handPlayers.find((player) => player.isHero);
@@ -1503,7 +1504,7 @@ const App = () => {
       return;
     }
 
-    if (boardCards.length === 5) {
+    if (boardCards.length >= 3) {
       setSolverError(null);
       try {
         const heroIsIP = heroSeat === "BTN" || heroSeat === "CO";
@@ -1515,7 +1516,8 @@ const App = () => {
           ipRange: DEFAULT_IP_RANGE,
           pot: Number(activeTable.pot || potSize),
           effectiveStack: Number(heroPlayer.stack ?? stack),
-          iterations: 300,
+          // No iteration count here: the worker picks one per street, since a
+          // flop tree does far more work per iteration than a river tree.
         });
         const chosen = solved.heroStrategy ?? solved.mix;
         const best = chosen.reduce((a, b) => (b.frequency > a.frequency ? b : a));
@@ -1530,10 +1532,16 @@ const App = () => {
             ev: null,
           })),
           notes:
-            `CFR+ equilibrium over ${solved.iterations} iterations, ` +
-            `${solved.nodes} nodes, ${solved.oopCombos} vs ${solved.ipCombos} combos. ` +
-            `Exploitability ${solved.exploitability.percentOfPot.toFixed(2)}% of pot ` +
-            `(${solved.elapsedMs}ms).`,
+            `CFR+ over ${solved.iterations} iterations, ${solved.nodes} nodes, ` +
+            `${solved.oopCombos} vs ${solved.ipCombos} combos, ` +
+            `${solved.runouts} runout${solved.runouts === 1 ? "" : "s"}. ` +
+            `Exploitability ${solved.exploitability.percentOfPot.toFixed(2)}% of pot` +
+            // A sampled solve measures exploitability inside the game it
+            // actually solved, so the number understates the real thing.
+            `${solved.exact
+              ? " (exact tree)"
+              : " within the sampled runouts, so the true figure is higher"}` +
+            ` (${solved.elapsedMs}ms).`,
         });
       } catch (error) {
         setSolverError(error.message);
@@ -2602,7 +2610,13 @@ const App = () => {
                   <div className="solver-head">
                     <h3>Solver Advice</h3>
                     <span className="pill subtle">
-                      {boardCards.length === 5 ? "CFR+ (local, exact river)" : solverEngine}
+                      {boardCards.length === 5
+                        ? "CFR+ (exact river)"
+                        : boardCards.length === 4
+                        ? "CFR+ (exact turn)"
+                        : boardCards.length === 3
+                        ? "CFR+ (flop, sampled runouts)"
+                        : solverEngine}
                     </span>
                   </div>
                   <p className="solver-copy">
@@ -2614,7 +2628,13 @@ const App = () => {
                       onClick={requestSolverAdvice}
                       disabled={solverLoading || solver.status === "solving"}
                     >
-                      {solverLoading || solver.status === "solving" ? "Solving..." : "Request Mix"}
+                      {solverLoading || solver.status === "solving"
+                        ? solver.progress
+                          ? `Solving ${Math.round(
+                              (solver.progress.iteration / solver.progress.iterations) * 100
+                            )}%`
+                          : "Solving..."
+                        : "Request Mix"}
                     </button>
                     <button
                       className="ghost-button"

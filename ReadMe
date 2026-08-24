@@ -31,7 +31,7 @@ runs identically on the main thread, in a Web Worker, or under Node.
 | [`handStrength.js`](src/engine/handStrength.js) | 169 starting hands ranked by measured equity (generated) |
 | [`opponent.js`](src/engine/opponent.js) | Bot decisions from equity vs pot odds |
 | [`table.js`](src/engine/table.js) | No-limit betting: blinds, min raises, side pots, showdown |
-| [`solver.js`](src/engine/solver.js) | CFR+ river solver, range vs range |
+| [`solver.js`](src/engine/solver.js) | CFR+ solver for flop, turn, and river, range vs range |
 
 Cards are integers (`rank * 4 + suit`) on every hot path; strings are only for
 display.
@@ -58,13 +58,28 @@ The engine is checked against external ground truth, not against itself:
   reproduces its known analytic equilibrium (with a pot-sized bet the
   bluffcatcher calls 50.0% and the polarized player bluffs 50.0% of its air,
   matching P/(P+B)).
+- **Chance nodes** — with betting disabled a subgame is pure showdown equity,
+  so the solved value must equal `(pot/2)(2·equity−1)`. It matches the equity
+  engine to 1e-6 on both the turn and a fully enumerated flop, which checks the
+  runout handling against an independently validated component.
 
 ### Exploitability, not vibes
 
 The solver reports how far from equilibrium a solve actually is, so its output
-can be judged rather than taken on faith. A realistic river spot (128 vs 159
-combos, 33 nodes) solves to **0.56% of pot exploitable in ~32ms**. Solving runs
-in a worker; the table stays interactive.
+can be judged rather than taken on faith. Measured in-browser against the app's
+own ranges (~180 vs ~250 combos), solving in a worker so the table stays
+interactive:
+
+| Street | Runouts | Time | Exploitable |
+| --- | --- | --- | --- |
+| River | 1 (exact) | 92ms | 0.60% of pot |
+| Turn | 48 (exact) | 1.4s | 0.78% of pot |
+| Flop | 24 (sampled) | 4.4s | 0.87% of pot |
+
+One caveat worth stating plainly: for a sampled flop that percentage is
+exploitability *within the runouts actually explored*. Against the full game it
+is higher, and shrinking the sample makes the number look better while making
+the answer worse. The UI says so on every flop solve.
 
 ## What is real and what is not
 
@@ -76,8 +91,11 @@ explicit:
 - **Heuristic:** the Rust service in `solver/` is a hand-strength estimate. It
   reports itself as such. It is *not* a CFR solver, despite once claiming to be
   "MCCFR (External Sampling)".
-- **Not implemented:** turn and flop solving. Those need chance nodes over
-  runouts; only complete boards are solved exactly today.
+- **Abstracted:** flop solving explores a sample of runouts rather than all
+  49×48 of them, which would need hundreds of megabytes. Results carry `exact:
+  false` and the UI labels them.
+- **Not implemented:** preflop solving, and multiway pots — the solver is
+  heads-up, two ranges.
 
 ## Regenerating derived data
 

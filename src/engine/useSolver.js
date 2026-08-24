@@ -22,12 +22,16 @@ export const useSolver = () => {
     progress: null,
   });
 
+  // Spin the worker up on mount rather than on first click, so its warmup
+  // runs while the user is still looking at the table.
   useEffect(() => {
+    ensureWorker();
     return () => {
       workerRef.current?.terminate();
       workerRef.current = null;
       pending.current.clear();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const ensureWorker = useCallback(() => {

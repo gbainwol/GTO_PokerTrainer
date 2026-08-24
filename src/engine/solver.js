@@ -150,9 +150,14 @@ export const buildSelfIndex = (mine, theirs) => {
  *
  * value[i] = payoff * (reach of worse hands - reach of better hands)
  */
+const CARD_WORSE = new Float64Array(52);
+const CARD_TOTAL = new Float64Array(52);
+
 export const showdownValues = (me, opp, meCtx, oppCtx, oppReach, payoff, selfIndex, out) => {
-  const cardWorse = new Float64Array(52);
-  const cardTotal = new Float64Array(52);
+  // Module-level scratch: this runs at every leaf of every iteration, and two
+  // fresh 52-slot arrays per call dominated the allocation churn.
+  const cardWorse = CARD_WORSE.fill(0);
+  const cardTotal = CARD_TOTAL.fill(0);
   let totalSum = 0;
 
   for (let j = 0; j < opp.size; j += 1) {
@@ -220,7 +225,7 @@ export const showdownValues = (me, opp, meCtx, oppCtx, oppReach, payoff, selfInd
 
 /** Fold values: the whole unblocked opponent range pays, regardless of strength. */
 export const foldValues = (me, opp, oppReach, payoff, selfIndex, out) => {
-  const cardTotal = new Float64Array(52);
+  const cardTotal = CARD_TOTAL.fill(0);
   let totalSum = 0;
   for (let j = 0; j < opp.size; j += 1) {
     const w = oppReach[j];
@@ -475,7 +480,20 @@ export const buildTree = (board, pot, effectiveStack, config = DEFAULT_TREE_CONF
 // CFR+
 // ---------------------------------------------------------------------------
 
-const allocate = (node, ranges, store) => {
+/**
+ * Per-node working memory.
+ *
+ * Every node is visited exactly once per traversal, so it can own its output
+ * vector rather than allocating one on each visit. Recomputing these on the fly
+ * meant well over a million short-lived typed arrays per solve.
+ */
+const makeBuffers = (ranges) => ({
+  out: [new Float64Array(ranges[0].size), new Float64Array(ranges[1].size)],
+  scratch: [new Float64Array(ranges[0].size), new Float64Array(ranges[1].size)],
+});
+
+const allocate = (node, ranges, store, buffers) => {
+  buffers.set(node.id, makeBuffers(ranges));
   if (node.type === DECISION) {
     const n = ranges[node.player].size;
     const a = node.actions.length;
@@ -486,11 +504,9 @@ const allocate = (node, ranges, store) => {
       n,
       a,
     });
-    node.children.forEach((child) => allocate(child, ranges, store));
-    return;
   }
-  if (node.type === CHANCE) {
-    node.children.forEach((child) => allocate(child, ranges, store));
+  if (node.type === DECISION || node.type === CHANCE) {
+    node.children.forEach((child) => allocate(child, ranges, store, buffers));
   }
 };
 
@@ -512,8 +528,7 @@ const updateStrategy = (data) => {
 };
 
 /** Copy a reach vector with every hand holding `card` zeroed out. */
-const withoutCard = (reach, range, card) => {
-  const out = new Float64Array(reach.length);
+const withoutCard = (reach, range, card, out) => {
   for (let i = 0; i < reach.length; i += 1) {
     out[i] = range.cardA[i] === card || range.cardB[i] === card ? 0 : reach[i];
   }
@@ -530,7 +545,8 @@ const withoutCard = (reach, range, card) => {
 const chanceValues = (node, target, reach, ctx, recurse) => {
   const me = ctx.ranges[target];
   const opp = ctx.ranges[1 - target];
-  const num = new Float64Array(me.size);
+  const bufs = ctx.buffers.get(node.id);
+  const num = bufs.out[target].fill(0);
 
   for (let b = 0; b < node.cards.length; b += 1) {
     const card = node.cards[b];
@@ -538,8 +554,8 @@ const chanceValues = (node, target, reach, ctx, recurse) => {
 
     const savedMe = reach[target];
     const savedOpp = reach[1 - target];
-    reach[target] = withoutCard(savedMe, me, card);
-    reach[1 - target] = withoutCard(savedOpp, opp, card);
+    reach[target] = withoutCard(savedMe, me, card, bufs.scratch[target]);
+    reach[1 - target] = withoutCard(savedOpp, opp, card, bufs.scratch[1 - target]);
     const childValue = recurse(node.children[b], target, reach, ctx);
     reach[target] = savedMe;
     reach[1 - target] = savedOpp;
@@ -566,11 +582,12 @@ const chanceValues = (node, target, reach, ctx, recurse) => {
    * per hand once runouts are sampled, it also breaks zero-sum.
    */
   const divisor = node.totalCards - 4;
-  const out = new Float64Array(me.size);
   if (divisor > 0) {
-    for (let i = 0; i < me.size; i += 1) out[i] = num[i] / divisor;
+    for (let i = 0; i < me.size; i += 1) num[i] /= divisor;
+  } else {
+    num.fill(0);
   }
-  return out;
+  return num;
 };
 
 /** One CFR traversal returning counterfactual values for `target`. */
@@ -584,18 +601,20 @@ const traverse = (node, target, reach, ctx) => {
     return showdownValues(
       me, opp,
       contexts[target][node.boardKey], contexts[1 - target][node.boardKey],
-      oppReach, node.payoff, selfIndex[target], new Float64Array(me.size)
+      oppReach, node.payoff, selfIndex[target], ctx.buffers.get(node.id).out[target]
     );
   }
   if (node.type === TERMINAL_FOLD) {
     const sign = node.folder === target ? -1 : 1;
-    return foldValues(me, opp, oppReach, sign * node.payoff, selfIndex[target], new Float64Array(me.size));
+    return foldValues(me, opp, oppReach, sign * node.payoff, selfIndex[target],
+                      ctx.buffers.get(node.id).out[target]);
   }
   if (node.type === CHANCE) {
     return chanceValues(node, target, reach, ctx, traverse);
   }
 
-  const out = new Float64Array(me.size);
+  const bufs = ctx.buffers.get(node.id);
+  const out = bufs.out[target].fill(0);
   const data = store.get(node.id);
   updateStrategy(data);
   const { strategy, regret, sum, a } = data;
@@ -625,7 +644,7 @@ const traverse = (node, target, reach, ctx) => {
   // Opponent node: fold their mix into their reach and sum the children.
   for (let k = 0; k < a; k += 1) {
     const saved = reach[1 - target];
-    const scaled = new Float64Array(opp.size);
+    const scaled = bufs.scratch[1 - target];
     for (let i = 0; i < opp.size; i += 1) scaled[i] = saved[i] * strategy[i * a + k];
     reach[1 - target] = scaled;
     const childValue = traverse(node.children[k], target, reach, ctx);
@@ -646,18 +665,20 @@ const bestResponse = (node, target, reach, ctx) => {
     return showdownValues(
       me, opp,
       contexts[target][node.boardKey], contexts[1 - target][node.boardKey],
-      oppReach, node.payoff, selfIndex[target], new Float64Array(me.size)
+      oppReach, node.payoff, selfIndex[target], ctx.buffers.get(node.id).out[target]
     );
   }
   if (node.type === TERMINAL_FOLD) {
     const sign = node.folder === target ? -1 : 1;
-    return foldValues(me, opp, oppReach, sign * node.payoff, selfIndex[target], new Float64Array(me.size));
+    return foldValues(me, opp, oppReach, sign * node.payoff, selfIndex[target],
+                      ctx.buffers.get(node.id).out[target]);
   }
   if (node.type === CHANCE) {
     return chanceValues(node, target, reach, ctx, bestResponse);
   }
 
-  const out = new Float64Array(me.size);
+  const bufs = ctx.buffers.get(node.id);
+  const out = bufs.out[target].fill(0);
   const a = node.actions.length;
 
   if (node.player === target) {
@@ -676,7 +697,7 @@ const bestResponse = (node, target, reach, ctx) => {
   const strat = average.get(node.id);
   for (let k = 0; k < a; k += 1) {
     const saved = reach[1 - target];
-    const scaled = new Float64Array(opp.size);
+    const scaled = bufs.scratch[1 - target];
     for (let i = 0; i < opp.size; i += 1) scaled[i] = saved[i] * strat[i * a + k];
     reach[1 - target] = scaled;
     const childValue = bestResponse(node.children[k], target, reach, ctx);
@@ -697,18 +718,20 @@ const averageWalk = (node, target, reach, ctx) => {
     return showdownValues(
       me, opp,
       contexts[target][node.boardKey], contexts[1 - target][node.boardKey],
-      oppReach, node.payoff, selfIndex[target], new Float64Array(me.size)
+      oppReach, node.payoff, selfIndex[target], ctx.buffers.get(node.id).out[target]
     );
   }
   if (node.type === TERMINAL_FOLD) {
     const sign = node.folder === target ? -1 : 1;
-    return foldValues(me, opp, oppReach, sign * node.payoff, selfIndex[target], new Float64Array(me.size));
+    return foldValues(me, opp, oppReach, sign * node.payoff, selfIndex[target],
+                      ctx.buffers.get(node.id).out[target]);
   }
   if (node.type === CHANCE) {
     return chanceValues(node, target, reach, ctx, averageWalk);
   }
 
-  const out = new Float64Array(me.size);
+  const bufs = ctx.buffers.get(node.id);
+  const out = bufs.out[target].fill(0);
   const avg = average.get(node.id);
   const a = node.actions.length;
 
@@ -722,7 +745,7 @@ const averageWalk = (node, target, reach, ctx) => {
 
   for (let k = 0; k < a; k += 1) {
     const saved = reach[1 - target];
-    const scaled = new Float64Array(opp.size);
+    const scaled = bufs.scratch[1 - target];
     for (let i = 0; i < opp.size; i += 1) scaled[i] = saved[i] * avg[i * a + k];
     reach[1 - target] = scaled;
     const childValue = averageWalk(node.children[k], target, reach, ctx);
@@ -774,9 +797,9 @@ const freshReach = (ranges) => [
  * Exploitability: how much each player gains by best-responding to the other's
  * average strategy. Zero at equilibrium.
  */
-export const computeExploitability = (tree, ranges, store, pot, contexts, selfIndex) => {
+export const computeExploitability = (tree, ranges, store, pot, contexts, selfIndex, buffers) => {
   const average = averageStrategy(store);
-  const ctx = { ranges, store, average, selfIndex, contexts };
+  const ctx = { ranges, store, average, selfIndex, contexts, buffers };
 
   let total = 0;
   for (const target of [OOP, IP]) {
@@ -850,9 +873,10 @@ export const solveSubgame = ({
   ];
 
   const store = new Map();
-  allocate(tree.root, ranges, store);
+  const buffers = new Map();
+  allocate(tree.root, ranges, store, buffers);
 
-  const ctx = { ranges, store, selfIndex, contexts };
+  const ctx = { ranges, store, selfIndex, contexts, buffers };
   const started = Date.now();
   for (let iter = 0; iter < iterations; iter += 1) {
     for (const target of [OOP, IP]) {
@@ -862,13 +886,14 @@ export const solveSubgame = ({
   }
 
   const average = averageStrategy(store);
-  const exploitability = computeExploitability(tree, ranges, store, pot, contexts, selfIndex);
+  const exploitability = computeExploitability(tree, ranges, store, pot, contexts, selfIndex, buffers);
 
   return {
     tree,
     ranges,
     contexts,
     selfIndex,
+    buffers,
     average,
     exploitability,
     iterations,
@@ -891,8 +916,8 @@ export const solveRiver = (opts) => {
 
 /** Expected value of the subgame for one player, in chips. */
 export const expectedValue = (result, player = OOP) => {
-  const { tree, ranges, average, contexts, selfIndex } = result;
-  const ctx = { ranges, average, selfIndex, contexts };
+  const { tree, ranges, average, contexts, selfIndex, buffers } = result;
+  const ctx = { ranges, average, selfIndex, contexts, buffers };
   const values = averageWalk(tree.root, player, freshReach(ranges), ctx);
   const me = ranges[player];
   let value = 0;
@@ -903,35 +928,40 @@ export const expectedValue = (result, player = OOP) => {
 
 /** Overall action frequencies at the root, weighted by range. */
 export const rootActionMix = (result, player = OOP) => {
-  const { tree, ranges, average } = result;
-  const node = tree.root;
+  const node = result.tree.root;
   if (node.player !== player) throw new Error("root does not belong to that player");
-  const avg = average.get(node.id);
-  const range = ranges[player];
-  const a = node.actions.length;
-
-  let mass = 0;
-  const totals = new Float64Array(a);
-  for (let i = 0; i < range.size; i += 1) {
-    const w = range.weight[i];
-    mass += w;
-    for (let k = 0; k < a; k += 1) totals[k] += w * avg[i * a + k];
-  }
-
-  return node.actions.map((action, k) => ({
-    action: action.label,
-    type: action.type,
-    size: action.size ?? 0,
-    frequency: mass > 0 ? totals[k] / mass : 0,
-  }));
+  return actionMixAt(result, node, player);
 };
 
-/** Strategy for one specific hand at the root. */
-export const handStrategy = (result, player, cardA, cardB) => {
-  const { tree, ranges, average } = result;
-  const node = tree.root;
+/**
+ * The first decision node belonging to `player`, following the passive line.
+ *
+ * The root always belongs to OOP, so an in-position hero's own first decision
+ * lives one level down. Reading the root for an IP hero indexed an
+ * OOP-sized strategy array and produced NaN frequencies.
+ */
+export const firstNodeFor = (tree, player) => {
+  let node = tree.root;
+  for (let depth = 0; depth < 8 && node; depth += 1) {
+    if (node.type === DECISION && node.player === player) return node;
+    if (node.type === DECISION) {
+      node = node.children[0];   // the check / fold branch
+    } else if (node.type === CHANCE) {
+      node = node.children[0];
+    } else {
+      return null;
+    }
+  }
+  return null;
+};
+
+/** Action frequencies for one specific hand at a given decision node. */
+export const handStrategyAt = (result, node, player, cardA, cardB) => {
+  if (!node || node.type !== DECISION || node.player !== player) return null;
+  const { ranges, average } = result;
   const range = ranges[player];
   const avg = average.get(node.id);
+  if (!avg) return null;
   const a = node.actions.length;
   const lo = Math.min(cardA, cardB);
   const hi = Math.max(cardA, cardB);
@@ -949,4 +979,31 @@ export const handStrategy = (result, player, cardA, cardB) => {
     }
   }
   return null;
+};
+
+/** Strategy for one specific hand at that player's first decision. */
+export const handStrategy = (result, player, cardA, cardB) =>
+  handStrategyAt(result, firstNodeFor(result.tree, player), player, cardA, cardB);
+
+/** Action frequencies across the range at a given decision node. */
+export const actionMixAt = (result, node, player) => {
+  if (!node || node.type !== DECISION || node.player !== player) return null;
+  const { ranges, average } = result;
+  const avg = average.get(node.id);
+  const range = ranges[player];
+  const a = node.actions.length;
+
+  let mass = 0;
+  const totals = new Float64Array(a);
+  for (let i = 0; i < range.size; i += 1) {
+    const w = range.weight[i];
+    mass += w;
+    for (let k = 0; k < a; k += 1) totals[k] += w * avg[i * a + k];
+  }
+  return node.actions.map((action, k) => ({
+    action: action.label,
+    type: action.type,
+    size: action.size ?? 0,
+    frequency: mass > 0 ? totals[k] / mass : 0,
+  }));
 };
