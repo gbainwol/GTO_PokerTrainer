@@ -19,6 +19,7 @@ import { createApiClient, createSolverClient } from "./utils/api";
 import { cardToInt } from "./engine/evaluator";
 import { decide, DEFAULT_STYLE } from "./engine/opponent";
 import { useEquity } from "./engine/useEquity";
+import { useSolver, DEFAULT_OOP_RANGE, DEFAULT_IP_RANGE } from "./engine/useSolver";
 import Card from "./components/Card.jsx";
 
 /** Skill mode picks how the bots play, not how strong the hero's cards are. */
@@ -412,7 +413,8 @@ const TableStage = memo(function TableStage({
       role="button"
       tabIndex={0}
     >
-      <div className="table-oval" key={`${table.id}-${dealTick}`}>
+      {/* Remount per hand and per street so the deal animation replays. */}
+    <div className="table-oval" key={`${table.id}-${dealTick}-${table.streetIndex}`}>
         <div className="table-rail"></div>
         <div className="table-felt large">
           <div className="table-center">
@@ -653,6 +655,7 @@ const App = () => {
   const [sessionEvents, setSessionEvents] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [sessionStartedAt, setSessionStartedAt] = useState(null);
+  const solver = useSolver();
   const [solverAdvice, setSolverAdvice] = useState(null);
   const [solverError, setSolverError] = useState(null);
   const [solverLoading, setSolverLoading] = useState(false);
@@ -1173,7 +1176,6 @@ const App = () => {
       }));
     }
     if (activePage === "play") {
-      let shouldAdvance = false;
       updateTable(activeTableIndex, (table) => {
         let staged = runNpcActions({ ...table }, heroSeat);
         if (staged.showdown) return staged;
@@ -1208,18 +1210,17 @@ const App = () => {
           actionIndex: nextIndex,
         };
         nextTable = runNpcActions(nextTable, null);
+        // Everyone has acted - deal the next street as part of this same
+        // transition rather than via a flag read outside the updater.
         if (
           autoAdvance &&
           !nextTable.showdown &&
           nextTable.actionIndex >= nextTable.actionQueue.length
         ) {
-          shouldAdvance = true;
+          nextTable = advanceStreetOn(nextTable);
         }
         return nextTable;
       });
-      if (autoAdvance && shouldAdvance) {
-        advanceStreet(activeTableIndex);
-      }
     } else if (drillActive && autoAdvance) {
       advanceScenario();
     }
@@ -1511,12 +1512,59 @@ const App = () => {
     };
   }, [potSize, callSize, betSize, raiseSize, heroEquityPct, equity, foldEquity]);
 
+  /**
+   * Ask for a strategy in the current spot.
+   *
+   * On a complete board this runs the local CFR+ solver, which returns a real
+   * equilibrium mix plus the exploitability of the solve. Earlier streets still
+   * go to the remote service - note that service reports itself as MCCFR but
+   * implements a hand-strength heuristic, so treat its output accordingly.
+   */
   const requestSolverAdvice = async () => {
     const heroPlayer = handPlayers.find((player) => player.isHero);
     if (!heroPlayer || heroPlayer.cards.length < 2) {
       setSolverError("Need hero cards to query solver.");
       return;
     }
+
+    if (boardCards.length === 5) {
+      setSolverError(null);
+      try {
+        const heroIsIP = heroSeat === "BTN" || heroSeat === "CO";
+        const solved = await solver.solve({
+          board: boardCards.map(cardToInt),
+          heroCards: heroPlayer.cards.map(cardToInt),
+          heroPosition: heroIsIP ? 1 : 0,
+          oopRange: DEFAULT_OOP_RANGE,
+          ipRange: DEFAULT_IP_RANGE,
+          pot: Number(activeTable.pot || potSize),
+          effectiveStack: Number(heroPlayer.stack ?? stack),
+          iterations: 300,
+        });
+        const chosen = solved.heroStrategy ?? solved.mix;
+        const best = chosen.reduce((a, b) => (b.frequency > a.frequency ? b : a));
+        setSolverAdvice({
+          best_action: best.action,
+          ev: heroIsIP ? solved.evIP : solved.evOOP,
+          // No per-action EV here: CFR returns the mix, and printing a
+          // placeholder 0.00 bb would read as a real number.
+          action_mix: chosen.map((item) => ({
+            action: item.action,
+            frequency: item.frequency,
+            ev: null,
+          })),
+          notes:
+            `CFR+ equilibrium over ${solved.iterations} iterations, ` +
+            `${solved.nodes} nodes, ${solved.oopCombos} vs ${solved.ipCombos} combos. ` +
+            `Exploitability ${solved.exploitability.percentOfPot.toFixed(2)}% of pot ` +
+            `(${solved.elapsedMs}ms).`,
+        });
+      } catch (error) {
+        setSolverError(error.message);
+      }
+      return;
+    }
+
     setSolverLoading(true);
     setSolverError(null);
     try {
@@ -1804,40 +1852,45 @@ const App = () => {
     setDecisionStart(Date.now());
   };
 
+  /**
+   * Pure street transition: takes a table, returns the table one street later.
+   *
+   * Kept separate from advanceStreet so it can run *inside* a state updater.
+   * The previous code set a `shouldAdvance` flag inside the setTables updater
+   * and read it on the next line - but React runs updaters lazily, so the flag
+   * was always still false and the street never advanced. Hands got stuck on
+   * preflop forever.
+   */
+  const advanceStreetOn = (table) => {
+    if (table.showdown) return table;
+    let nextDeck = table.deck;
+    let nextBoard = table.boardCards;
+    let nextStreet = table.streetIndex;
+    if (table.streetIndex === 0) {
+      const { dealt, remaining } = dealCards(nextDeck, 3);
+      nextDeck = remaining;
+      nextBoard = [...nextBoard, ...dealt];
+      nextStreet = 1;
+    } else if (table.streetIndex === 1 || table.streetIndex === 2) {
+      const { dealt, remaining } = dealCards(nextDeck, 1);
+      nextDeck = remaining;
+      nextBoard = [...nextBoard, ...dealt];
+      nextStreet = table.streetIndex + 1;
+    } else if (table.streetIndex === 3) {
+      return resolveShowdown(table);
+    }
+    return {
+      ...table,
+      boardCards: nextBoard,
+      deck: nextDeck,
+      actionQueue: buildActionQueue(HAND_STREETS[nextStreet] || "Preflop"),
+      actionIndex: 0,
+      streetIndex: nextStreet,
+    };
+  };
+
   const advanceStreet = (tableIndex) => {
-    updateTable(tableIndex, (table) => {
-      if (table.showdown) return table;
-      let nextDeck = table.deck;
-      let nextBoard = table.boardCards;
-      let nextStreet = table.streetIndex;
-      if (table.streetIndex === 0) {
-        const { dealt, remaining } = dealCards(nextDeck, 3);
-        nextDeck = remaining;
-        nextBoard = [...nextBoard, ...dealt];
-        nextStreet = 1;
-      } else if (table.streetIndex === 1) {
-        const { dealt, remaining } = dealCards(nextDeck, 1);
-        nextDeck = remaining;
-        nextBoard = [...nextBoard, ...dealt];
-        nextStreet = 2;
-      } else if (table.streetIndex === 2) {
-        const { dealt, remaining } = dealCards(nextDeck, 1);
-        nextDeck = remaining;
-        nextBoard = [...nextBoard, ...dealt];
-        nextStreet = 3;
-      } else if (table.streetIndex === 3) {
-        return resolveShowdown(table);
-      }
-      return {
-        ...table,
-        boardCards: nextBoard,
-        deck: nextDeck,
-        actionQueue: buildActionQueue(HAND_STREETS[nextStreet] || "Preflop"),
-        actionIndex: 0,
-        streetIndex: nextStreet,
-      };
-    });
-    setDealTick((prev) => prev + 1);
+    updateTable(tableIndex, advanceStreetOn);
   };
 
   const currentStreet =
@@ -2773,7 +2826,9 @@ const App = () => {
                 <div className="panel-card solver-card table-console">
                   <div className="solver-head">
                     <h3>Solver Advice</h3>
-                    <span className="pill subtle">{solverEngine}</span>
+                    <span className="pill subtle">
+                      {boardCards.length === 5 ? "CFR+ (local, exact river)" : solverEngine}
+                    </span>
                   </div>
                   <p className="solver-copy">
                     Query the local solver for the active hand and street.
@@ -2782,18 +2837,21 @@ const App = () => {
                     <button
                       className="secondary-button"
                       onClick={requestSolverAdvice}
-                      disabled={solverLoading}
+                      disabled={solverLoading || solver.status === "solving"}
                     >
-                      {solverLoading ? "Solving..." : "Request Mix"}
+                      {solverLoading || solver.status === "solving" ? "Solving..." : "Request Mix"}
                     </button>
                     <button
                       className="ghost-button"
                       onClick={() => setSolverAdvice(null)}
-                      disabled={solverLoading}
+                      disabled={solverLoading || solver.status === "solving"}
                     >
                       Clear
                     </button>
                   </div>
+                  {solver.error && !solverError ? (
+                    <div className="solver-error">{solver.error}</div>
+                  ) : null}
                   {solverError ? (
                     <div className="solver-error">{solverError}</div>
                   ) : null}
@@ -2815,7 +2873,7 @@ const App = () => {
                             <div className="solver-row-head">
                               <span>{item.action}</span>
                               <span>{Math.round(item.frequency * 100)}%</span>
-                              <span>{formatChips(item.ev ?? 0)}</span>
+                              <span>{item.ev == null ? "\u2014" : formatChips(item.ev)}</span>
                             </div>
                             <div className="solver-bar">
                               <div
