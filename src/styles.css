@@ -2035,3 +2035,14 @@ body::before {
     flex-direction: column;
   }
 }
+
+.next-hand-row {
+  align-items: center;
+  gap: 12px;
+}
+
+.showdown-result {
+  color: var(--accent-2);
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}

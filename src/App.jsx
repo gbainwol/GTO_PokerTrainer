@@ -2763,6 +2763,26 @@ const App = () => {
                       Check
                     </button>
                   </div>
+                  {/* startNewHand existed but nothing ever called it, so a
+                      table was a dead end once it reached showdown. */}
+                  <div className="action-row next-hand-row">
+                    <button
+                      className={
+                        showdown
+                          ? "secondary-button action-button"
+                          : "ghost-button action-button"
+                      }
+                      onClick={() => startNewHand(activeTableIndex)}
+                    >
+                      {showdown ? "Deal Next Hand" : "Fold & Deal Next"}
+                    </button>
+                    {showdown && winningHand ? (
+                      <span className="showdown-result">
+                        {handWinners.length > 1 ? "Split pot" : "Winner"} &middot;{" "}
+                        {winningHand}
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="bet-input-row">
                     <label className="field compact-field">
                       Bet size (bb)
