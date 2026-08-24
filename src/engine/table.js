@@ -558,3 +558,87 @@ export const showdownSummary = (state) =>
     score: p.handScore,
     won: round2(state.awards?.get(p.index) ?? 0),
   }));
+
+/**
+ * Start a hand part-way through, on a given board with a pot already built.
+ *
+ * Postflop subgame solving needs this: the interesting question is how a
+ * flop, turn, or river plays out given ranges and a pot, not how the money got
+ * there. Blinds are not posted and hole cards are supplied by the caller,
+ * because in a subgame each player is drawn from a range rather than a deck.
+ *
+ * @param {object} opts
+ * @param {Array<{seat:string, stack:number, hole:number[]}>} opts.players
+ * @param {number[]} opts.board       3, 4, or 5 community cards
+ * @param {number}   opts.pot         chips already in the middle
+ * @param {number[]} opts.deck        remaining cards, for the runout
+ * @param {number}   [opts.bigBlind]  sets the minimum bet
+ * @param {number}   [opts.buttonIndex]
+ */
+export const createPostflopHand = ({
+  players,
+  board,
+  pot,
+  deck,
+  bigBlind = 1,
+  buttonIndex = 0,
+}) => {
+  if (![3, 4, 5].includes(board.length)) {
+    throw new Error(`board must have 3, 4, or 5 cards (got ${board.length})`);
+  }
+  if (players.length < 2) throw new Error("need at least two players");
+
+  const seated = players.map((p, index) => ({
+    seat: p.seat,
+    name: p.name ?? p.seat,
+    index,
+    startingStack: p.stack,
+    stack: p.stack,
+    hole: [...p.hole],
+    folded: false,
+    allIn: false,
+    committedStreet: 0,
+    committedTotal: 0,
+    hasActed: false,
+    canRaise: true,
+    lastAction: null,
+  }));
+
+  /*
+   * The dead pot is recorded as an equal contribution from each player. That
+   * keeps every downstream calculation - side pots, chip conservation,
+   * utilities - working unchanged, and it is also the truth: a pot that
+   * everyone is still contesting was built by all of them.
+   */
+  const share = Math.round((pot / seated.length) * 100) / 100;
+  for (const player of seated) {
+    player.committedTotal = share;
+    // Their stack before putting that share in, so utility comes out net of
+    // it. This is the split-pot convention solver.js uses: winning a pot
+    // nobody has bet into is worth pot/2, and a chop is worth 0.
+    player.startingStack = player.stack + share;
+  }
+
+  const state = {
+    players: seated,
+    buttonIndex,
+    board: [...board],
+    deck,
+    deckCursor: 0,
+    street: board.length === 5 ? RIVER : board.length === 4 ? TURN : FLOP,
+    currentBet: 0,
+    minRaise: bigBlind,
+    smallBlind: bigBlind / 2,
+    bigBlind,
+    lastAggressor: null,
+    toAct: null,
+    complete: false,
+    pots: [],
+    winners: [],
+    log: [],
+    startingChips: seated.reduce((sum, p) => sum + p.stack + p.committedTotal, 0),
+  };
+
+  state.toAct = nextActiveFrom(state, (buttonIndex + 1) % seated.length);
+  return state;
+};
