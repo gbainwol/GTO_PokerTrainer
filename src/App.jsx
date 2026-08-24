@@ -1576,24 +1576,38 @@ const App = () => {
           setSolverError(solved.reason);
           return;
         }
-        const hero = solved.hero ?? {};
-        const mix = [
-          { action: "Fold", frequency: hero.fold ?? 0, ev: null },
-          { action: "All-in", frequency: hero.shove ?? 0, ev: null },
-        ];
+        const hero = solved.hero;
+        if (!hero) {
+          setSolverAdvice(null);
+          setSolverError(
+            "The solved strategy has no decision for this seat and hand - " +
+            "usually the big blind in a pot everyone folded to."
+          );
+          return;
+        }
+        // Deep play has more than two branches, so use the labels the solver
+        // reports rather than assuming fold/shove.
+        const labels = solved.actionLabels ?? ["Fold", "All-in"];
+        const values = hero.mix ?? [hero.fold ?? 0, hero.shove ?? 0];
+        const mix = values.map((frequency, i) => ({
+          action: labels[i] ?? `Action ${i + 1}`,
+          frequency,
+          ev: null,
+        }));
         const heroEv = solved.seatEv.find((e) => e.seat === heroSeat);
         setSolverAdvice({
-          best_action: (hero.shove ?? 0) >= (hero.fold ?? 0) ? "All-in" : "Fold",
+          best_action: mix.reduce((a, b) => (b.frequency > a.frequency ? b : a)).action,
           ev: heroEv ? heroEv.evBB : 0,
           action_mix: mix,
           notes:
-            `MCCFR push/fold, ${solved.players}-handed at ${solved.stackBB}bb: ` +
-            `${hero.code ?? "?"} shoves ${(100 * (hero.shove ?? 0)).toFixed(0)}%. ` +
+            `MCCFR ${solved.model}, ${solved.players}-handed at ${solved.stackBB}bb: ` +
+            `${hero.code ?? "?"} ` +
+            `${hero.opening ? "first in" : `after ${hero.history}`}. ` +
             `${solved.iterations.toLocaleString()} iterations over ` +
             `${solved.infoSets.toLocaleString()} information sets, ` +
             `${(solved.undertrained * 100).toFixed(0)}% undertrained` +
             `${solved.cached ? ", cached" : ` (${solved.elapsedMs}ms)`}. ` +
-            `Postflop is checked down, so this is a short-stack model.`,
+            `Postflop is checked down.`,
           seatEv: solved.seatEv,
         });
       } catch (error) {

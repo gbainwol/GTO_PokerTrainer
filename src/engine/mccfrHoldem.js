@@ -28,6 +28,29 @@ import {
   PREFLOP,
 } from "./table.js";
 import { cardsToHandCode } from "./range.js";
+import { RANK_BY_CODE } from "./handStrength.js";
+
+/**
+ * Group the 169 starting hands into fewer strategic classes.
+ *
+ * Deep-stacked play with real raise sizes has far too many betting sequences
+ * for every hand to get its own strategy, so hands are grouped. Uniform
+ * grouping is wrong at the top - AA and 99 are five ranks apart and would land
+ * together - so the strongest `exactTop` hands keep their own class and only
+ * the tail is grouped.
+ *
+ * Returns a function from hand code to class label.
+ */
+export const makeHandBucketer = (buckets, exactTop = 20) => {
+  if (!buckets) return (code) => code;
+  const tailBuckets = Math.max(1, buckets - exactTop);
+  const tailSize = Math.ceil((169 - exactTop) / tailBuckets);
+  return (code) => {
+    const rank = RANK_BY_CODE.get(code) ?? 168;
+    if (rank < exactTop) return code;
+    return `b${Math.floor((rank - exactTop) / tailSize)}`;
+  };
+};
 
 /** Raise sizes as a fraction of the pot after calling. Kept short on purpose. */
 export const DEFAULT_RAISE_FRACTIONS = [1.0];
@@ -65,8 +88,10 @@ export const makeHoldemGame = ({
   maxRaises = 3,
   allowAllIn = true,
   pushFold = false,
+  handBuckets = null,
 }) => {
   const players = seats.map((s) => ({ seat: s.seat, stack: s.stack }));
+  const bucketOf = makeHandBucketer(handBuckets);
 
   /**
    * Abstract the legal actions into a small, stable set.
@@ -146,6 +171,7 @@ export const makeHoldemGame = ({
     seats: players.map((p) => p.seat),
     postflop: "checkdown",
     model: pushFold ? "push-fold" : "sized-raises",
+    handBuckets,
 
     root(rng) {
       const hand = createHand({
@@ -177,7 +203,7 @@ export const makeHoldemGame = ({
      */
     infoSet(s) {
       const player = s.players[s.toAct];
-      const code = cardsToHandCode(player.hole[0], player.hole[1]);
+      const code = bucketOf(cardsToHandCode(player.hole[0], player.hole[1]));
       return `${player.seat}|${code}|${s.history.join(">") || "-"}`;
     },
 

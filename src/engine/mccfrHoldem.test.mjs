@@ -224,21 +224,45 @@ console.log("\n6. Determinism, and the limits of the sized-raise model");
      evA.map((e) => e.ev.toFixed(6)).join(", "));
 
   /*
-   * Recorded rather than asserted: with sized raises instead of shove-or-fold,
-   * six-max preflop does not converge at any iteration count worth waiting for
-   * in a browser. The information set count is still growing at 200k
-   * iterations and the median set has been visited about three times. This is
-   * why pushFold is the default for multiway, and why trainingQuality exists.
+   * Deep-stacked play with real raise sizes, by player count.
+   *
+   * Push/fold only describes short stacks, so this is the model for anything
+   * deeper. It converges heads-up and is usable three-handed; beyond that it
+   * does not, and hand abstraction does not rescue it. Grouping the 169
+   * starting hands into 24 classes cuts six-max information sets from 748k to
+   * 85k but leaves the median visited three times, because the bottleneck is
+   * the number of distinct betting sequences, not the number of hands.
+   *
+   * Note the opening decisions train fine even where the whole tree does not -
+   * they are visited constantly - which is exactly why trainingQuality has to
+   * be consulted rather than eyeballing a chart.
    */
-  for (const iterations of [20000, 100000]) {
-    const sized = solveTable(6, 20, iterations, { pushFold: false, maxRaises: 2 });
+  const deep = [];
+  for (const n of [2, 3]) {
+    const solved = solveTable(n, 100, 120000, { pushFold: false, maxRaises: 2 });
+    const q = trainingQuality(solved.result.store);
+    const evs = evaluateStrategy(solved.game, solved.result.store, { samples: 30000, seed: 11 });
+    deep.push({ n, q });
+    console.log(
+      `       ${n}-handed at 100bb: ${q.infoSets} info sets, median ${q.median} visits, ` +
+      `${(q.undertrained * 100).toFixed(0)}% undertrained, ${solved.result.elapsedMs}ms`
+    );
+    near(`${n}-handed deep payoffs sum to zero`, evs.reduce((a, e) => a + e.ev, 0), 0, 1e-6);
+  }
+  ok("heads-up deep preflop is fully trained", deep[0].q.undertrained < 0.02,
+     `${(deep[0].q.undertrained * 100).toFixed(1)}%`);
+  ok("three-handed deep preflop is usable", deep[1].q.median >= 50,
+     `median ${deep[1].q.median} visits`);
+
+  for (const iterations of [50000]) {
+    const sized = solveTable(6, 100, iterations, { pushFold: false, maxRaises: 2 });
     const q = trainingQuality(sized.result.store);
     console.log(
-      `       6-max sized raises, ${String(iterations).padStart(6)} iters: ${q.infoSets} info sets, ` +
+      `       6-handed at 100bb, ${iterations} iters: ${q.infoSets} info sets, ` +
       `median ${q.median} visits, ${(q.undertrained * 100).toFixed(0)}% undertrained`
     );
+    console.log("       (recorded, not asserted - six-max deep does not converge here)");
   }
-  console.log("       (recorded, not asserted - see the comment above)");
 }
 
 console.log(

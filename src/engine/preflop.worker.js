@@ -9,7 +9,7 @@
  */
 
 import { makeHoldemGame, seatExpectedValues, openingStrategy } from "./mccfrHoldem.js";
-import { solveMCCFR, averageStrategy, evaluateStrategy, trainingQuality } from "./mccfr.js";
+import { solveMCCFR, averageStrategy, evaluateStrategy, trainingQuality, makeRng } from "./mccfr.js";
 import { cardsToHandCode, handCodeToCombos } from "./range.js";
 
 /** Solved tables, keyed by shape. Bounded so a long session cannot grow it. */
@@ -27,6 +27,22 @@ const MAX_CACHED = 12;
  */
 export const MAX_PUSHFOLD_BB = 25;
 
+/**
+ * Deep play needs real raise sizes, which explodes the number of betting
+ * sequences. Measured at 120k iterations and 100bb:
+ *
+ *   2 players    1,690 info sets   median 421 visits    0% undertrained
+ *   3 players   13,165 info sets   median  81 visits   23% undertrained
+ *   4 players   71,223 info sets   median  19 visits   60% undertrained
+ *   6 players  452,812 info sets   median   2 visits   94% undertrained
+ *
+ * Grouping the 169 starting hands into 24 classes cuts six-max to 85k sets but
+ * leaves the median at three visits, because the bottleneck is the betting
+ * sequences rather than the hands. So deep solving is offered up to three
+ * players and refused beyond that.
+ */
+export const MAX_DEEP_PLAYERS = 3;
+
 /** Stacks are bucketed: 11.4bb and 11.6bb do not deserve separate solves. */
 const bucketStack = (stack) => {
   if (stack <= 6) return Math.max(2, Math.round(stack));
@@ -34,8 +50,8 @@ const bucketStack = (stack) => {
   return Math.round(stack / 5) * 5;
 };
 
-const solveFor = ({ seats, buttonIndex, stack, smallBlind, bigBlind, iterations, onProgress }) => {
-  const key = `${seats.join(",")}|btn${buttonIndex}|${stack}|${smallBlind}/${bigBlind}|${iterations}`;
+const solveFor = ({ seats, buttonIndex, stack, smallBlind, bigBlind, iterations, pushFold, onProgress }) => {
+  const key = `${seats.join(",")}|btn${buttonIndex}|${stack}|${smallBlind}/${bigBlind}|${iterations}|${pushFold ? "pf" : "deep"}`;
   const hit = cache.get(key);
   if (hit) return { ...hit, cached: true };
 
@@ -44,7 +60,9 @@ const solveFor = ({ seats, buttonIndex, stack, smallBlind, bigBlind, iterations,
     buttonIndex,
     smallBlind,
     bigBlind,
-    pushFold: true,
+    pushFold,
+    raiseFractions: pushFold ? undefined : [1.0],
+    maxRaises: pushFold ? undefined : 2,
   });
 
   const result = solveMCCFR(game, { iterations, seed: 0x51e4d0, onProgress });
@@ -53,12 +71,14 @@ const solveFor = ({ seats, buttonIndex, stack, smallBlind, bigBlind, iterations,
 
   const entry = {
     game,
+    labels: {},
     average,
     quality: trainingQuality(result.store),
     seatEv: seatExpectedValues(game, evaluations, bigBlind),
     iterations: result.iterations,
     infoSets: result.infoSets,
     elapsedMs: result.elapsedMs,
+    pushFold,
     cached: false,
   };
 
@@ -71,22 +91,81 @@ const solveFor = ({ seats, buttonIndex, stack, smallBlind, bigBlind, iterations,
  * The hero's own decision: their seat's strategy for the hand they hold, at
  * the point they first act with nobody having raised.
  */
+/**
+ * The action labels available at a specific decision.
+ *
+ * Push/fold offers fold and shove; deep play also offers a call and a sized
+ * raise, so assuming two branches drops half the deep-mode strategy. The
+ * labels are read off the game by replaying the history that led to the
+ * decision - walking only the fold branch, as an earlier version did, could
+ * never reach a node like "BTN:allin" and returned nothing.
+ *
+ * Deals are resampled because a short stack can change which actions are
+ * legal; with fixed stacks the first attempt succeeds.
+ */
+const labelsForDecision = (game, seat, history) => {
+  const steps = !history || history === "-" ? [] : history.split(">");
+  const rng = makeRng(0xabc123);
+
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    let state = game.root(rng);
+    let reached = true;
+
+    for (const step of steps) {
+      if (game.isTerminal(state)) { reached = false; break; }
+      const [wantSeat, wantLabel] = step.split(":");
+      if (state.players[state.toAct].seat !== wantSeat) { reached = false; break; }
+      const actions = game.actions(state);
+      const index = actions.findIndex((a) => a.label === wantLabel);
+      if (index < 0) { reached = false; break; }
+      state = game.next(state, actions[index]);
+    }
+    if (!reached || game.isTerminal(state)) continue;
+
+    const actions = game.actions(state);
+    if (state.players[state.toAct].seat === seat && actions.length > 1) {
+      return actions.map((a) => a.label);
+    }
+  }
+  return null;
+};
+
 const heroAdvice = (average, seat, holeCards) => {
   if (!holeCards || holeCards.length !== 2) return null;
   const code = cardsToHandCode(holeCards[0], holeCards[1]);
+
+  /*
+   * Take the hero's *earliest* decision with this hand, not specifically the
+   * opening one. Some seats never get an opening decision at all - the big
+   * blind three-handed wins outright when both opponents fold, so no such
+   * information set exists - and looking only for openings returned nulls that
+   * the panel rendered as "Fold 0% / All-in 0%".
+   *
+   * The history is returned alongside so the spot being described is explicit
+   * rather than assumed.
+   */
+  let best = null;
   for (const [key, probs] of average) {
     const [keySeat, keyCode, history] = key.split("|");
     if (keySeat !== seat || keyCode !== code) continue;
-    if (history !== "-" && !history.split(">").every((h) => h.endsWith(":fold"))) continue;
-    const list = Array.from(probs);
-    // Push/fold always orders the branches fold-first, shove-last.
-    return {
-      code,
-      fold: list[0] ?? 0,
-      shove: list[list.length - 1] ?? 0,
-    };
+    const depth = history === "-" ? 0 : history.split(">").length;
+    if (!best || depth < best.depth) {
+      best = { depth, history, probs: Array.from(probs) };
+    }
   }
-  return { code, fold: null, shove: null };
+  if (!best) return null;
+
+  return {
+    code,
+    fold: best.probs[0] ?? 0,
+    shove: best.probs[best.probs.length - 1] ?? 0,
+    mix: best.probs,
+    history: best.history,
+    /** True when this really is "first in with nobody having raised". */
+    opening:
+      best.history === "-" ||
+      best.history.split(">").every((h) => h.endsWith(":fold")),
+  };
 };
 
 /** Combo-weighted share of all 1326 hands this seat shoves. */
@@ -100,6 +179,22 @@ const shoveShare = (average, seat) => {
   }
   return total > 0 ? shoved / total : 0;
 };
+
+/**
+ * Warm the JIT before the first real request, the same way solver.worker.js
+ * does. A cold isolate ran a six-max push/fold solve in roughly twice the time
+ * a warm one takes.
+ */
+try {
+  const warm = makeHoldemGame({
+    seats: [{ seat: "A", stack: 8 }, { seat: "B", stack: 8 }],
+    buttonIndex: 0,
+    pushFold: true,
+  });
+  solveMCCFR(warm, { iterations: 4000, seed: 1 });
+} catch {
+  // Best effort only; never let warmup break real requests.
+}
 
 self.onmessage = (event) => {
   const { id, payload } = event.data ?? {};
@@ -122,7 +217,9 @@ self.onmessage = (event) => {
     }
 
     const effectiveBB = stack / bigBlind;
-    if (effectiveBB > MAX_PUSHFOLD_BB) {
+    const deep = effectiveBB > MAX_PUSHFOLD_BB;
+
+    if (deep && seats.length > MAX_DEEP_PLAYERS) {
       self.postMessage({
         id,
         ok: true,
@@ -131,19 +228,22 @@ self.onmessage = (event) => {
           stackBB: Math.round(effectiveBB),
           maxBB: MAX_PUSHFOLD_BB,
           reason:
-            `Push/fold does not describe ${Math.round(effectiveBB)}bb play. This model ` +
-            `assumes the hand ends preflop and the board is checked down, which only ` +
-            `holds up to about ${MAX_PUSHFOLD_BB}bb. Deal a shorter stack, or use the ` +
-            `postflop solver once there is a board.`,
+            `${Math.round(effectiveBB)}bb is too deep for the push/fold model, and ` +
+            `${seats.length}-handed deep preflop does not converge here - the number of ` +
+            `betting sequences outruns what the solver can train. Deep solving works up ` +
+            `to ${MAX_DEEP_PLAYERS} players; below ${MAX_PUSHFOLD_BB}bb push/fold covers ` +
+            `any table size.`,
         },
       });
       return;
     }
 
     const bucketed = bucketStack(effectiveBB);
-    // Six-max needs more passes than heads-up to train the same fraction of a
-    // much larger tree, so the budget scales with the player count.
-    const defaultIterations = Math.round(20000 * seats.length);
+    // A bigger tree needs more passes to train the same fraction of it, and a
+    // deep tree is far bigger than a push/fold one at the same table size.
+    const defaultIterations = deep
+      ? Math.round(60000 * seats.length)
+      : Math.round(20000 * seats.length);
 
     const solved = solveFor({
       seats,
@@ -152,6 +252,7 @@ self.onmessage = (event) => {
       smallBlind: smallBlind / bigBlind,
       bigBlind: 1,
       iterations: iterations ?? defaultIterations,
+      pushFold: !deep,
       onProgress: (p) => self.postMessage({ id, progress: p }),
     });
 
@@ -160,6 +261,16 @@ self.onmessage = (event) => {
       ok: true,
       result: {
         hero: heroAdvice(solved.average, heroSeat, heroCards),
+        actionLabels: (() => {
+          const advice = heroAdvice(solved.average, heroSeat, heroCards);
+          const cacheKey = `${heroSeat}|${advice?.history ?? "-"}`;
+          return (
+            solved.labels[cacheKey] ??
+            (solved.labels[cacheKey] = labelsForDecision(
+              solved.game, heroSeat, advice?.history ?? null
+            ))
+          );
+        })(),
         heroShoveShare: shoveShare(solved.average, heroSeat),
         seatEv: solved.seatEv,
         stackBB: bucketed,
@@ -170,7 +281,10 @@ self.onmessage = (event) => {
         medianVisits: solved.quality.median,
         elapsedMs: solved.elapsedMs,
         cached: solved.cached,
-        model: "push-fold, postflop checked down",
+        pushFold: solved.pushFold,
+        model: solved.pushFold
+          ? "push/fold, postflop checked down"
+          : "sized raises, postflop checked down",
       },
     });
   } catch (error) {
