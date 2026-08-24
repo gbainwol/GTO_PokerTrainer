@@ -33,7 +33,8 @@ runs identically on the main thread, in a Web Worker, or under Node.
 | [`table.js`](src/engine/table.js) | No-limit betting: blinds, min raises, side pots, showdown |
 | [`solver.js`](src/engine/solver.js) | CFR+ solver for flop, turn, and river, range vs range |
 | [`mccfr.js`](src/engine/mccfr.js) | External-sampling MCCFR, game-agnostic |
-| [`mccfrHoldem.js`](src/engine/mccfrHoldem.js) | Multiway preflop push/fold over the betting engine |
+| [`mccfrHoldem.js`](src/engine/mccfrHoldem.js) | Multiway preflop over the betting engine |
+| [`mccfrPostflop.js`](src/engine/mccfrPostflop.js) | Multiway postflop subgames, sampled runouts |
 
 Cards are integers (`rank * 4 + suit`) on every hot path; strings are only for
 display.
@@ -71,6 +72,10 @@ The engine is checked against external ground truth, not against itself:
   big blind *mixes* between calling and folding must sit at the pot odds, and
   their mean equity against the solved shoving range is 44.0% against a
   theoretical 45.0%.
+- **Two solvers, one answer** — on a heads-up river spot the exact vector
+  solver and MCCFR solve the same game by completely different means (enumerated
+  runouts and vector sweeps vs sampled runouts and sampled opponents) and agree
+  to 0.0026 chips, inside the 0.0323 sampling error.
 - **Chance nodes** — with betting disabled a subgame is pure showdown equity,
   so the solved value must equal `(pot/2)(2·equity−1)`. It matches the equity
   engine to 1e-6 on both the turn and a fully enumerated flop, which checks the
@@ -91,22 +96,32 @@ interactive:
 
 ### Multiway, and where it stops
 
-Preflop is the one street that is reliably multiway, and the heads-up vector
-solver cannot model it at all. MCCFR handles 2–6 players by running over the
-same betting engine the table uses, so side pots and legality are not
-reimplemented.
+Two solvers cover different shapes of the game:
 
-It is a **push/fold** model: shove or fold preflop, board checked down. That is
-the right description of short-stack play and the wrong one of deep play, so it
-is gated to 25bb and refuses to answer above that rather than giving confident
-bad advice. Six-max at 12bb solves in ~8s to 0% undertrained, and is cached by
-table shape so later hands return in milliseconds.
+| | Heads-up | 3-handed | 6-max |
+| --- | --- | --- | --- |
+| Postflop, deep | exact (vector CFR) | MCCFR, bucketed | MCCFR, bucketed |
+| Preflop, ≤25bb | push/fold | push/fold | push/fold |
+| Preflop, deep | converged | usable | **not viable** |
 
-The sized-raise variant does **not** converge at six-max: at 200k iterations the
-information set count is still growing and the median set has been visited
-three times. `trainingQuality()` reports this, because under-training is
-otherwise invisible — at 20k iterations a six-max "opening range" ranked Q7s
-above JTs, which is noise wearing the shape of strategy.
+Postflop multiway samples runouts instead of enumerating them, and buckets
+hands into 27 strength tiers on the visible board — which is what makes a
+six-way pot tractable at all, and is a real loss of information: two hands in
+the same bucket must play identically.
+
+Deep multiway preflop is where this stops. At 100bb with real raise sizes,
+six-max needs 452,812 information sets and the median one is visited *twice*
+in 120k iterations. Hand abstraction is not the fix — grouping the 169 starting
+hands into 24 classes cuts that to 85k sets and still leaves the median at
+three visits, because the bottleneck is the number of distinct betting
+sequences. The app refuses those spots rather than answering them.
+
+Training is not uniform, either. The typical six-way postflop decision is
+visited 232 times at 400k iterations while the tenth percentile is visited 5,
+because more players means more rare betting sequences. `trainingQuality()`
+reports both, since under-training is otherwise invisible — at 20k iterations a
+six-max "opening range" once ranked Q7s above JTs, which is noise in the shape
+of strategy.
 
 One caveat worth stating plainly: for a sampled flop that percentage is
 exploitability *within the runouts actually explored*. Against the full game it
@@ -126,8 +141,10 @@ explicit:
 - **Abstracted:** flop solving explores a sample of runouts rather than all
   49×48 of them, which would need hundreds of megabytes. Results carry `exact:
   false` and the UI labels them.
-- **Not implemented:** deep-stacked preflop solving, and multiway *postflop*.
-  Preflop multiway is push/fold only; postflop remains heads-up, two ranges.
+- **Not implemented:** deep-stacked preflop beyond three players, and
+  postflop solving that reasons about future streets exactly rather than by
+  sampling. The preflop models all check the board down, so they describe how
+  the money goes in, not how it plays out.
 
 ## Regenerating derived data
 
