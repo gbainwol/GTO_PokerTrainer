@@ -32,6 +32,8 @@ runs identically on the main thread, in a Web Worker, or under Node.
 | [`opponent.js`](src/engine/opponent.js) | Bot decisions from equity vs pot odds |
 | [`table.js`](src/engine/table.js) | No-limit betting: blinds, min raises, side pots, showdown |
 | [`solver.js`](src/engine/solver.js) | CFR+ solver for flop, turn, and river, range vs range |
+| [`mccfr.js`](src/engine/mccfr.js) | External-sampling MCCFR, game-agnostic |
+| [`mccfrHoldem.js`](src/engine/mccfrHoldem.js) | Multiway preflop push/fold over the betting engine |
 
 Cards are integers (`rank * 4 + suit`) on every hot path; strings are only for
 display.
@@ -58,6 +60,17 @@ The engine is checked against external ground truth, not against itself:
   reproduces its known analytic equilibrium (with a pot-sized bet the
   bluffcatcher calls 50.0% and the polarized player bluffs 50.0% of its air,
   matching P/(P+B)).
+- **MCCFR** — checked against Kuhn poker, whose equilibrium is closed-form. It
+  recovers the whole equilibrium family (P1 never bets the queen and bets the
+  king exactly 3× as often as the jack; P2 mixes 1/3 with both), and the exact
+  value of the solved profile is −0.05605 against the analytic −1/18.
+  Exploitability, computed by enumerating all 64 pure strategies per player, is
+  0.0042 chips/hand.
+- **Multiway** — heads-up shoving matches published Nash charts (71.1% vs 71 at
+  5bb, 59.6% vs 59 at 10bb). The sharper check needs no chart: the hands the
+  big blind *mixes* between calling and folding must sit at the pot odds, and
+  their mean equity against the solved shoving range is 44.0% against a
+  theoretical 45.0%.
 - **Chance nodes** — with betting disabled a subgame is pure showdown equity,
   so the solved value must equal `(pot/2)(2·equity−1)`. It matches the equity
   engine to 1e-6 on both the turn and a fully enumerated flop, which checks the
@@ -75,6 +88,25 @@ interactive:
 | River | 1 (exact) | 92ms | 0.60% of pot |
 | Turn | 48 (exact) | 1.4s | 0.78% of pot |
 | Flop | 24 (sampled) | 4.4s | 0.87% of pot |
+
+### Multiway, and where it stops
+
+Preflop is the one street that is reliably multiway, and the heads-up vector
+solver cannot model it at all. MCCFR handles 2–6 players by running over the
+same betting engine the table uses, so side pots and legality are not
+reimplemented.
+
+It is a **push/fold** model: shove or fold preflop, board checked down. That is
+the right description of short-stack play and the wrong one of deep play, so it
+is gated to 25bb and refuses to answer above that rather than giving confident
+bad advice. Six-max at 12bb solves in ~8s to 0% undertrained, and is cached by
+table shape so later hands return in milliseconds.
+
+The sized-raise variant does **not** converge at six-max: at 200k iterations the
+information set count is still growing and the median set has been visited
+three times. `trainingQuality()` reports this, because under-training is
+otherwise invisible — at 20k iterations a six-max "opening range" ranked Q7s
+above JTs, which is noise wearing the shape of strategy.
 
 One caveat worth stating plainly: for a sampled flop that percentage is
 exploitability *within the runouts actually explored*. Against the full game it
@@ -94,8 +126,8 @@ explicit:
 - **Abstracted:** flop solving explores a sample of runouts rather than all
   49×48 of them, which would need hundreds of megabytes. Results carry `exact:
   false` and the UI labels them.
-- **Not implemented:** preflop solving, and multiway pots — the solver is
-  heads-up, two ranges.
+- **Not implemented:** deep-stacked preflop solving, and multiway *postflop*.
+  Preflop multiway is push/fold only; postflop remains heads-up, two ranges.
 
 ## Regenerating derived data
 
