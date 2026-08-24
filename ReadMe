@@ -30,6 +30,7 @@ runs identically on the main thread, in a Web Worker, or under Node.
 | [`range.js`](src/engine/range.js) | Range notation (`TT+`, `A5s+`, `22-55`, weights) → concrete combos |
 | [`handStrength.js`](src/engine/handStrength.js) | 169 starting hands ranked by measured equity (generated) |
 | [`opponent.js`](src/engine/opponent.js) | Bot decisions from equity vs pot odds |
+| [`table.js`](src/engine/table.js) | No-limit betting: blinds, min raises, side pots, showdown |
 | [`solver.js`](src/engine/solver.js) | CFR+ river solver, range vs range |
 
 Cards are integers (`rank * 4 + suit`) on every hot path; strings are only for
@@ -47,6 +48,10 @@ The engine is checked against external ground truth, not against itself:
   46.21%, AKo vs 22 46.96%, AKo vs AQo 74.39% (suit-averaged), AA vs a random
   hand 85.09%. Monte Carlo lands within its own reported error bars of the
   exact answer.
+- **Betting** — 3000 random hands and 20,659 actions with chips verified
+  after *every single action*; worst drift 0.000000. Side pots, minimum
+  raises, all-in-for-less not reopening betting, and the big blind's option
+  are each checked directly.
 - **Solver** — terminal values match a brute-force O(n·m) reference to 6e-14
   including exact card removal; exploitability falls from 2.3% to 0.03% of pot
   over 10 → 800 iterations; and the polarized-vs-bluffcatcher toy game
@@ -66,8 +71,8 @@ in a worker; the table stays interactive.
 This codebase previously advertised capabilities it did not have, so to be
 explicit:
 
-- **Real:** hand evaluation, equity, ranges, opponent decisions, and the river
-  solver. All covered by `npm test`.
+- **Real:** hand evaluation, equity, ranges, opponent decisions, no-limit
+  betting, and the river solver. All covered by `npm test`.
 - **Heuristic:** the Rust service in `solver/` is a hand-strength estimate. It
   reports itself as such. It is *not* a CFR solver, despite once claiming to be
   "MCCFR (External Sampling)".
@@ -85,7 +90,8 @@ npm run gen:strength
 ## Layout
 
 ```
-src/engine/      math: evaluator, equity, ranges, opponents, solver (+ workers)
+src/engine/      math and rules: evaluator, equity, ranges, opponents,
+                 betting engine, solver (+ workers)
 src/components/  SVG playing cards
 src/utils/       thin compatibility shims over the engine
 server/          Express + SQLite session and analytics store
