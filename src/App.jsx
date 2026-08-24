@@ -17,7 +17,8 @@ import {
 } from "./utils/poker";
 import { createApiClient, createSolverClient } from "./utils/api";
 import { cardToInt } from "./engine/evaluator";
-import { decide, DEFAULT_STYLE } from "./engine/opponent";
+import { DEFAULT_STYLE } from "./engine/opponent";
+import { startHand, heroAction } from "./engine/tableAdapter";
 import { useEquity } from "./engine/useEquity";
 import { useSolver, DEFAULT_OOP_RANGE, DEFAULT_IP_RANGE } from "./engine/useSolver";
 import Card from "./components/Card.jsx";
@@ -1171,51 +1172,15 @@ const App = () => {
       }));
     }
     if (activePage === "play") {
-      updateTable(activeTableIndex, (table) => {
-        let staged = runNpcActions({ ...table }, heroSeat);
-        if (staged.showdown) return staged;
-        const seatToAct = staged.actionQueue[staged.actionIndex];
-        if (seatToAct !== heroSeat) return staged;
-
-        if (move === "Fold") {
-          let burned = staged.burnPile || [];
-          const nextPlayers = staged.handPlayers.map((player) => {
-            if (!player.isHero) return player;
-            burned = [...burned, ...player.cards];
-            return { ...player, inHand: false, mucked: true, cards: [] };
-          });
-          return resolveShowdown({
-            ...staged,
-            handPlayers: nextPlayers,
-            burnPile: burned,
-          });
-        }
-
-        const betAmount =
-          move === "Bet" || move === "Raise"
-            ? toAmount(betInput || betSize, toAmount(betSize))
-            : move === "Call"
-            ? toAmount(callSize, 0)
-            : 0;
-        const nextPot = Number((staged.pot + betAmount).toFixed(2));
-        const nextIndex = staged.actionIndex + 1;
-        let nextTable = {
-          ...staged,
-          pot: nextPot,
-          actionIndex: nextIndex,
-        };
-        nextTable = runNpcActions(nextTable, null);
-        // Everyone has acted - deal the next street as part of this same
-        // transition rather than via a flag read outside the updater.
-        if (
-          autoAdvance &&
-          !nextTable.showdown &&
-          nextTable.actionIndex >= nextTable.actionQueue.length
-        ) {
-          nextTable = advanceStreetOn(nextTable);
-        }
-        return nextTable;
-      });
+      // One call into the engine: it validates the hero's action, runs the
+      // bots, closes the street, deals the next board, and settles at
+      // showdown - all with chips conserved.
+      updateTable(activeTableIndex, (table) =>
+        heroAction(table, move, toAmount(betInput || betSize, toAmount(betSize)), {
+          heroSeat,
+          style: NPC_STYLE_BY_SKILL[skillMode] ?? DEFAULT_STYLE,
+        })
+      );
     } else if (drillActive && autoAdvance) {
       advanceScenario();
     }
@@ -1618,227 +1583,10 @@ const App = () => {
     }, {});
   };
 
-  const basePot = () => {
-    const blinds = 1.5;
-    const anteTotal = hasAntes ? seats.length * 0.1 : 0;
-    const straddle = hasStraddles ? 1 : 0;
-    return Number((blinds + anteTotal + straddle).toFixed(2));
-  };
-
-  const npcProfile = () => {
-    if (skillMode === "Beginner") {
-      return { fold: 0.15, call: 0.6, bet: 0.25, raise: 0 };
-    }
-    if (skillMode === "Intermediate") {
-      return { fold: 0.25, call: 0.5, bet: 0.2, raise: 0.05 };
-    }
-    return { fold: 0.28, call: 0.35, bet: 0.25, raise: 0.12 };
-  };
-
-  const buildActionQueue = (streetName = "Preflop") => {
-    const rotateToSeat = (list, startSeat) => {
-      const idx = list.indexOf(startSeat);
-      if (idx === -1) return [...list];
-      return [...list.slice(idx), ...list.slice(0, idx)];
-    };
-
-    if (actionOrderMode === "heroFirst") {
-      return rotateToSeat(seats, heroSeat);
-    }
-
-    const bbStart = () => {
-      const idx = seats.indexOf("BB");
-      if (idx === -1) return seats[0];
-      return seats[(idx + 1) % seats.length];
-    };
-
-    const btnStart = () => {
-      const btnIdx = seats.indexOf("BTN");
-      if (btnIdx !== -1) return seats[(btnIdx + 1) % seats.length] || seats[0];
-      const sbIdx = seats.indexOf("SB");
-      if (sbIdx !== -1) return seats[sbIdx];
-      return seats[0];
-    };
-
-    const startSeat = streetName === "Preflop" ? bbStart() : btnStart();
-    return rotateToSeat(seats, startSeat);
-  };
-
-  const buildNewHandState = (tableId) => {
-    const deck = shuffleDeck(buildDeck());
-    const seatStacks = buildSeatStacks();
-    const names = [...PLAYER_NAMES].sort(() => Math.random() - 0.5);
-    const playersList = seats.map((seat, index) => ({
-      seat,
-      name: names[index % names.length],
-      stack: seatStacks[seat],
-      cards: [],
-      inHand: true,
-      isHero: seat === heroSeat,
-      isVillain: seat === villainSeat,
-    }));
-    const { dealt, remaining } = dealCards(deck, playersList.length * 2);
-    const withCards = playersList.map((player, index) => ({
-      ...player,
-      cards: dealt.slice(index * 2, index * 2 + 2),
-    }));
-    return {
-      id: tableId,
-      handPlayers: withCards,
-      boardCards: [],
-      burnPile: [],
-      pot: basePot(),
-      actionQueue: buildActionQueue("Preflop"),
-      actionIndex: 0,
-      streetIndex: 0,
-      showdown: false,
-      handWinners: [],
-      winningHand: "",
-      deck: remaining,
-    };
-  };
-
   const updateTable = (tableIndex, updater) => {
     setTables((prev) =>
-      prev.map((table, index) => {
-        if (index !== tableIndex) return table;
-        return updater(table);
-      })
+      prev.map((table, index) => (index === tableIndex ? updater(table) : table))
     );
-  };
-
-  const resolveShowdown = (table) => {
-    let nextBoard = table.boardCards;
-    let nextDeck = table.deck;
-    const needed = Math.max(0, 5 - nextBoard.length);
-    if (needed > 0) {
-      const { dealt, remaining } = dealCards(nextDeck, needed);
-      nextDeck = remaining;
-      nextBoard = [...nextBoard, ...dealt];
-    }
-    const activePlayers = table.handPlayers.filter((player) => player.inHand);
-    if (!activePlayers.length) {
-      return {
-        ...table,
-        boardCards: nextBoard,
-        deck: nextDeck,
-        showdown: true,
-        streetIndex: 4,
-        handWinners: [],
-        winningHand: "",
-      };
-    }
-    const ranked = activePlayers.map((player) => ({
-      seat: player.seat,
-      result: evaluateHand([...nextBoard, ...player.cards]),
-    }));
-    const bestScore = Math.max(...ranked.map((item) => item.result.score));
-    const winners = ranked.filter((item) => item.result.score === bestScore);
-    return {
-      ...table,
-      boardCards: nextBoard,
-      deck: nextDeck,
-      showdown: true,
-      streetIndex: 4,
-      handWinners: winners.map((winner) => winner.seat),
-      winningHand: winners[0]?.result.name || "",
-    };
-  };
-
-  const endHandIfSingle = (table) => {
-    const remaining = table.handPlayers.filter((player) => player.inHand);
-    if (remaining.length <= 1) {
-      const winner = remaining[0]?.seat;
-      return {
-        ...table,
-        showdown: true,
-        streetIndex: 4,
-        handWinners: winner ? [winner] : [],
-        winningHand: winner ? "Uncontested" : "",
-      };
-    }
-    return table;
-  };
-
-  /**
-   * Advance the bots through the action queue.
-   *
-   * Each bot evaluates its actual hand - equity against the live opponent
-   * count, weighed against the pot odds it is being offered - rather than
-   * rolling a die against a fixed fold/call/bet profile as the prototype did.
-   * Skill mode selects the style profile, so "Beginner" tables are populated
-   * by loose-passive stations and "Pro" tables by aggressive regulars.
-   */
-  const runNpcActions = (table, untilSeat) => {
-    let nextTable = { ...table };
-    let index = nextTable.actionIndex;
-    let iterations = 0;
-    const style = NPC_STYLE_BY_SKILL[skillMode] ?? DEFAULT_STYLE;
-    const board = nextTable.boardCards.map(cardToInt);
-    const queueLength = Math.max(1, nextTable.actionQueue.length - 1);
-
-    while (
-      index < nextTable.actionQueue.length &&
-      iterations < nextTable.actionQueue.length
-    ) {
-      const seat = nextTable.actionQueue[index];
-      if (untilSeat && seat === untilSeat) break;
-      const player = nextTable.handPlayers.find((p) => p.seat === seat);
-      if (!player || !player.inHand || player.isHero || player.cards.length < 2) {
-        index += 1;
-        iterations += 1;
-        continue;
-      }
-
-      const opponents = nextTable.handPlayers.filter(
-        (p) => p.inHand && p.seat !== seat
-      ).length;
-
-      const decision = decide({
-        hole: player.cards.map(cardToInt),
-        board,
-        pot: nextTable.pot,
-        toCall: toAmount(callSize, 0),
-        stack: player.stack,
-        minRaise: toAmount(betSize, 1) || 1,
-        opponents: Math.max(1, opponents),
-        style,
-        // Later in the queue means later position, which widens the range.
-        position: index / queueLength,
-      });
-
-      if (decision.action === "fold") {
-        nextTable = {
-          ...nextTable,
-          handPlayers: nextTable.handPlayers.map((p) =>
-            p.seat === seat
-              ? { ...p, inHand: false, cards: [], lastAction: decision }
-              : p
-          ),
-        };
-      } else {
-        const contributed = decision.amount ?? 0;
-        nextTable = {
-          ...nextTable,
-          pot: Number((nextTable.pot + contributed).toFixed(2)),
-          handPlayers: nextTable.handPlayers.map((p) =>
-            p.seat === seat
-              ? {
-                  ...p,
-                  stack: Number(Math.max(0, p.stack - contributed).toFixed(2)),
-                  lastAction: decision,
-                }
-              : p
-          ),
-        };
-      }
-
-      index += 1;
-      iterations += 1;
-      nextTable = endHandIfSingle(nextTable);
-      if (nextTable.showdown) break;
-    }
-    return { ...nextTable, actionIndex: index };
   };
 
   const startNewHand = (tableIndex) => {
@@ -1848,45 +1596,36 @@ const App = () => {
   };
 
   /**
-   * Pure street transition: takes a table, returns the table one street later.
+   * Deal a new hand through the betting engine.
    *
-   * Kept separate from advanceStreet so it can run *inside* a state updater.
-   * The previous code set a `shouldAdvance` flag inside the setTables updater
-   * and read it on the next line - but React runs updaters lazily, so the flag
-   * was always still false and the street never advanced. Hands got stuck on
-   * preflop forever.
+   * The engine owns blinds, positions, legal actions, minimum raises, side
+   * pots, and chip conservation. This previously built an ad-hoc table object
+   * whose "pot" was incremented by whatever the bet-size slider happened to
+   * say, with no per-player accounting at all.
+   *
+   * Betting, street transitions, showdown, and bot actions all live in
+   * src/engine/table.js, reached through src/engine/tableAdapter.js.
    */
-  const advanceStreetOn = (table) => {
-    if (table.showdown) return table;
-    let nextDeck = table.deck;
-    let nextBoard = table.boardCards;
-    let nextStreet = table.streetIndex;
-    if (table.streetIndex === 0) {
-      const { dealt, remaining } = dealCards(nextDeck, 3);
-      nextDeck = remaining;
-      nextBoard = [...nextBoard, ...dealt];
-      nextStreet = 1;
-    } else if (table.streetIndex === 1 || table.streetIndex === 2) {
-      const { dealt, remaining } = dealCards(nextDeck, 1);
-      nextDeck = remaining;
-      nextBoard = [...nextBoard, ...dealt];
-      nextStreet = table.streetIndex + 1;
-    } else if (table.streetIndex === 3) {
-      return resolveShowdown(table);
-    }
-    return {
-      ...table,
-      boardCards: nextBoard,
-      deck: nextDeck,
-      actionQueue: buildActionQueue(HAND_STREETS[nextStreet] || "Preflop"),
-      actionIndex: 0,
-      streetIndex: nextStreet,
-    };
+  const buildNewHandState = (tableId) => {
+    const seatStacks = buildSeatStacks();
+    const names = [...PLAYER_NAMES].sort(() => Math.random() - 0.5);
+    const stacks = seats.reduce((acc, seat, index) => {
+      acc[seat] = { name: names[index % names.length], stack: seatStacks[seat] };
+      return acc;
+    }, {});
+    return startHand({
+      id: tableId,
+      seats,
+      stacks,
+      buttonSeat: "BTN",
+      heroSeat,
+      villainSeat,
+      smallBlind: 0.5,
+      bigBlind: 1,
+      style: NPC_STYLE_BY_SKILL[skillMode] ?? DEFAULT_STYLE,
+    });
   };
 
-  const advanceStreet = (tableIndex) => {
-    updateTable(tableIndex, advanceStreetOn);
-  };
 
   const currentStreet =
     HAND_STREETS[tables[activeTableIndex]?.streetIndex || 0] || "Preflop";
