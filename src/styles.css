@@ -2046,3 +2046,28 @@ body::before {
   font-size: 0.85rem;
   letter-spacing: 0.02em;
 }
+
+/* The stage reserves a 16:9 area, but the oval was sizing to its content and
+   leaving a large dead band underneath. Let the table fill the space it is
+   given so the felt scales with the stage instead of floating at the top. */
+.play-table .table-stage {
+  display: flex;
+}
+
+.play-table .table-oval {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.play-table .table-felt.large {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.play-table .table-center {
+  width: 100%;
+}
