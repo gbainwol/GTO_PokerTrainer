@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createScenario } from "./data/scenarios";
 import { PREFLOP_CHARTS } from "./data/preflopCharts";
 import {
@@ -16,6 +16,17 @@ import {
   evaluateHand,
 } from "./utils/poker";
 import { createApiClient, createSolverClient } from "./utils/api";
+import { cardToInt } from "./engine/evaluator";
+import { decide, DEFAULT_STYLE } from "./engine/opponent";
+import { useEquity } from "./engine/useEquity";
+import Card from "./components/Card.jsx";
+
+/** Skill mode picks how the bots play, not how strong the hero's cards are. */
+const NPC_STYLE_BY_SKILL = {
+  Beginner: "station",
+  Intermediate: "tag",
+  Pro: "lag",
+};
 
 const formatChips = (value) => `${value.toFixed(2)} bb`;
 
@@ -364,6 +375,171 @@ const parseAction = (actionText) => {
   return { action: match[1].trim(), actionSize: match[2] || "" };
 };
 
+
+/**
+ * One poker table.
+ *
+ * Extracted from App and memoized: editing an unrelated control (bet size,
+ * sliders, session settings) used to re-render every table on screen. With
+ * this boundary a table only re-renders when its own hand state changes.
+ */
+const TableStage = memo(function TableStage({
+  table,
+  isActive,
+  index,
+  onSelect,
+  dealTick,
+  seatPositions,
+  stack,
+  potSize,
+}) {
+  const tablePlayers = useMemo(
+    () =>
+      table.handPlayers.reduce((acc, player) => {
+        acc[player.seat] = player;
+        return acc;
+      }, {}),
+    [table.handPlayers]
+  );
+
+  return (
+    <div
+      key={table.id}
+      className={`table-stage ${
+        isActive ? "active-table" : ""
+      }`}
+      onClick={() => onSelect(index)}
+      role="button"
+      tabIndex={0}
+    >
+      <div className="table-oval" key={`${table.id}-${dealTick}`}>
+        <div className="table-rail"></div>
+        <div className="table-felt large">
+          <div className="table-center">
+            <div className="table-board">
+              {Array.from({ length: 5 }).map((_, slot) => {
+                const card = table.boardCards[slot];
+                const animationClass =
+                  table.boardCards.length <= 3
+                    ? "deal-flop"
+                    : table.boardCards.length === 4 &&
+                      slot === 3
+                    ? "deal-turn"
+                    : table.boardCards.length === 5 &&
+                      slot === 4
+                    ? "deal-river"
+                    : "deal-static";
+                return (
+                  <Card
+                    key={`board-${slot}`}
+                    card={card ?? null}
+                    size="lg"
+                    className={
+                      card && animationClass !== "deal-static"
+                        ? "pcard-deal"
+                        : undefined
+                    }
+                  />
+                );
+              })}
+              <div className="table-card back deal-static burn-slot">
+                {Array.from({
+                  length: Math.min(table.burnPile.length, 3),
+                }).map((_, burnIndex) => (
+                  <span
+                    key={`burn-${burnIndex}`}
+                    className="burn-stack-card"
+                    style={{
+                      transform: `translate(${
+                        burnIndex * 3
+                      }px, ${burnIndex * -2}px)`,
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="table-pot">
+              <span>Pot</span>
+              <strong>
+                {(table.pot ?? potSize).toFixed(2)} bb
+              </strong>
+              {table.showdown && table.winningHand ? (
+                <span className="pot-result">
+                  {table.winningHand}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        <div className="seat-ring">
+          {seatPositions.map((item) => {
+            const player = tablePlayers[item.seat];
+            const showCards =
+              player?.inHand &&
+              (player?.isHero || table.showdown);
+            return (
+              <div
+                key={item.seat}
+                className="seat-wrap"
+                style={{
+                  "--seat-x": `${item.x}%`,
+                  "--seat-y": `${item.y}%`,
+                }}
+              >
+                <div className="seat-cards">
+                  {player?.inHand ? (
+                    (player?.cards || []).map(
+                      (card, cardIndex) => (
+                        <Card
+                          key={`${card}-${cardIndex}`}
+                          card={card}
+                          faceDown={!showCards}
+                          size="sm"
+                          highlight={
+                            table.showdown &&
+                            table.handWinners.includes(item.seat)
+                          }
+                        />
+                      )
+                    )
+                  ) : (
+                    <span className="seat-folded">
+                      Folded
+                    </span>
+                  )}
+                </div>
+                <div
+                  className={`seat-chip ${
+                    player?.isHero ? "hero" : ""
+                  } ${
+                    player?.isVillain ? "villain" : ""
+                  } ${
+                    table.handWinners.includes(item.seat)
+                      ? "winner"
+                      : ""
+                  }`}
+                >
+                  <div className="seat-avatar">
+                    <span>{item.seat.slice(0, 2)}</span>
+                  </div>
+                  <div className="seat-meta">
+                    <span className="seat-name">
+                      {player?.name || item.seat}
+                    </span>
+                    <span className="seat-stack">
+                      {player?.stack ?? stack} bb
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+});
+
 const App = () => {
   const apiBase =
     import.meta.env.VITE_API_URL?.trim() || "http://localhost:5174";
@@ -485,24 +661,6 @@ const App = () => {
   const chart = PREFLOP_CHARTS.find(
     (item) => item.position === chartPosition
   );
-
-  const evResults = useMemo(() => {
-    const base = {
-      pot: Number(potSize),
-      callSize: Number(callSize),
-      betSize: Number(betSize),
-      raiseSize: Number(raiseSize),
-      equity: Number(equity),
-      foldEquity: Number(foldEquity),
-    };
-
-    return {
-      call: calculateCallEV(base),
-      bet: calculateBetEV(base),
-      raise: calculateRaiseEV(base),
-      fold: calculateFoldEV(),
-    };
-  }, [potSize, callSize, betSize, raiseSize, equity, foldEquity]);
 
   useEffect(() => {
     const storedAuth = localStorage.getItem(STORAGE_KEYS.auth);
@@ -694,16 +852,19 @@ const App = () => {
       });
   };
 
+  // The interval depends only on whether the drill is running. Including
+  // drillRemaining here tore down and recreated the timer on every tick, which
+  // re-rendered the whole tree once a second.
   useEffect(() => {
-    if (!drillActive) return;
-    if (drillRemaining <= 0) {
-      setDrillActive(false);
-      return;
-    }
+    if (!drillActive) return undefined;
     const timer = setInterval(() => {
       setDrillRemaining((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(timer);
+  }, [drillActive]);
+
+  useEffect(() => {
+    if (drillActive && drillRemaining <= 0) setDrillActive(false);
   }, [drillActive, drillRemaining]);
 
   const handleCustomChange = (field, value) => {
@@ -1288,12 +1449,67 @@ const App = () => {
   const showdown = activeTable.showdown;
   const handWinners = activeTable.handWinners || [];
   const winningHand = activeTable.winningHand || "";
+  // Stable identity: an inline arrow here would change every render and
+  // defeat the memo on TableStage.
+  const handleSelectTable = useCallback((index) => setActiveTableIndex(index), []);
+
   const handPlayersBySeat = useMemo(() => {
     return handPlayers.reduce((acc, player) => {
       acc[player.seat] = player;
       return acc;
     }, {});
   }, [handPlayers]);
+
+  // --- Live equity --------------------------------------------------------
+  // The hero's real equity in the hand actually being played, computed by the
+  // engine in a worker. This replaces the manual "Equity (%)" slider, which
+  // fed every EV readout a number the user had typed in by hand.
+  const heroPlayer = handPlayers.find((player) => player.isHero);
+  const liveOpponents = handPlayers.filter(
+    (player) => player.inHand && !player.isHero
+  ).length;
+
+  const equitySpot = useMemo(() => {
+    if (!heroPlayer || heroPlayer.cards.length < 2) return null;
+    if (liveOpponents < 1) return null;
+    // Only whole streets are valid inputs (0, 3, 4, or 5 cards).
+    if (![0, 3, 4, 5].includes(boardCards.length)) return null;
+    return {
+      hero: heroPlayer.cards.map(cardToInt),
+      board: boardCards.map(cardToInt),
+      opponents: liveOpponents,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heroPlayer?.cards.join(","), boardCards.join(","), liveOpponents]);
+
+  const liveEquity = useEquity(equitySpot);
+
+  // Percentage form, for the EV panels that expect 0-100.
+  const heroEquityPct =
+    liveEquity.equity != null ? liveEquity.equity * 100 : null;
+
+  /**
+   * EV of each action. Equity comes from the engine whenever a live hand is on
+   * the table; the manual slider is only a fallback for the standalone EV
+   * calculator, where there are no real cards to evaluate.
+   */
+  const evResults = useMemo(() => {
+    const base = {
+      pot: Number(potSize),
+      callSize: Number(callSize),
+      betSize: Number(betSize),
+      raiseSize: Number(raiseSize),
+      equity: heroEquityPct ?? Number(equity),
+      foldEquity: Number(foldEquity),
+    };
+
+    return {
+      call: calculateCallEV(base),
+      bet: calculateBetEV(base),
+      raise: calculateRaiseEV(base),
+      fold: calculateFoldEV(),
+    };
+  }, [potSize, callSize, betSize, raiseSize, heroEquityPct, equity, foldEquity]);
 
   const requestSolverAdvice = async () => {
     const heroPlayer = handPlayers.find((player) => player.isHero);
@@ -1501,11 +1717,23 @@ const App = () => {
     return table;
   };
 
+  /**
+   * Advance the bots through the action queue.
+   *
+   * Each bot evaluates its actual hand - equity against the live opponent
+   * count, weighed against the pot odds it is being offered - rather than
+   * rolling a die against a fixed fold/call/bet profile as the prototype did.
+   * Skill mode selects the style profile, so "Beginner" tables are populated
+   * by loose-passive stations and "Pro" tables by aggressive regulars.
+   */
   const runNpcActions = (table, untilSeat) => {
     let nextTable = { ...table };
     let index = nextTable.actionIndex;
     let iterations = 0;
-    const profile = npcProfile();
+    const style = NPC_STYLE_BY_SKILL[skillMode] ?? DEFAULT_STYLE;
+    const board = nextTable.boardCards.map(cardToInt);
+    const queueLength = Math.max(1, nextTable.actionQueue.length - 1);
+
     while (
       index < nextTable.actionQueue.length &&
       iterations < nextTable.actionQueue.length
@@ -1513,39 +1741,55 @@ const App = () => {
       const seat = nextTable.actionQueue[index];
       if (untilSeat && seat === untilSeat) break;
       const player = nextTable.handPlayers.find((p) => p.seat === seat);
-      if (!player || !player.inHand || player.isHero) {
+      if (!player || !player.inHand || player.isHero || player.cards.length < 2) {
         index += 1;
         iterations += 1;
         continue;
       }
-      const roll = Math.random();
-      if (roll < profile.fold) {
-        const updatedPlayers = nextTable.handPlayers.map((p) =>
-          p.seat === seat ? { ...p, inHand: false, cards: [] } : p
-        );
-        nextTable = { ...nextTable, handPlayers: updatedPlayers };
-      } else if (roll < profile.fold + profile.call) {
+
+      const opponents = nextTable.handPlayers.filter(
+        (p) => p.inHand && p.seat !== seat
+      ).length;
+
+      const decision = decide({
+        hole: player.cards.map(cardToInt),
+        board,
+        pot: nextTable.pot,
+        toCall: toAmount(callSize, 0),
+        stack: player.stack,
+        minRaise: toAmount(betSize, 1) || 1,
+        opponents: Math.max(1, opponents),
+        style,
+        // Later in the queue means later position, which widens the range.
+        position: index / queueLength,
+      });
+
+      if (decision.action === "fold") {
         nextTable = {
           ...nextTable,
-          pot: Number(
-            (nextTable.pot + toAmount(callSize, 0)).toFixed(2)
-          ),
-        };
-      } else if (roll < profile.fold + profile.call + profile.bet) {
-        nextTable = {
-          ...nextTable,
-          pot: Number(
-            (nextTable.pot + toAmount(betSize, 0)).toFixed(2)
+          handPlayers: nextTable.handPlayers.map((p) =>
+            p.seat === seat
+              ? { ...p, inHand: false, cards: [], lastAction: decision }
+              : p
           ),
         };
       } else {
+        const contributed = decision.amount ?? 0;
         nextTable = {
           ...nextTable,
-          pot: Number(
-            (nextTable.pot + toAmount(raiseSize, 0)).toFixed(2)
+          pot: Number((nextTable.pot + contributed).toFixed(2)),
+          handPlayers: nextTable.handPlayers.map((p) =>
+            p.seat === seat
+              ? {
+                  ...p,
+                  stack: Number(Math.max(0, p.stack - contributed).toFixed(2)),
+                  lastAction: decision,
+                }
+              : p
           ),
         };
       }
+
       index += 1;
       iterations += 1;
       nextTable = endHandIfSingle(nextTable);
@@ -2366,156 +2610,19 @@ const App = () => {
                         : "quad"
                     }`}
                   >
-                    {tables.map((table, index) => {
-                      const tablePlayers = table.handPlayers.reduce(
-                        (acc, player) => {
-                          acc[player.seat] = player;
-                          return acc;
-                        },
-                        {}
-                      );
-                      const isActive = index === activeTableIndex;
-                      return (
-                        <div
-                          key={table.id}
-                          className={`table-stage ${
-                            isActive ? "active-table" : ""
-                          }`}
-                          onClick={() => setActiveTableIndex(index)}
-                          role="button"
-                          tabIndex={0}
-                        >
-                          <div className="table-oval" key={`${table.id}-${dealTick}`}>
-                            <div className="table-rail"></div>
-                            <div className="table-felt large">
-                              <div className="table-center">
-                                <div className="table-board">
-                                  {Array.from({ length: 5 }).map((_, slot) => {
-                                    const card = table.boardCards[slot];
-                                    const animationClass =
-                                      table.boardCards.length <= 3
-                                        ? "deal-flop"
-                                        : table.boardCards.length === 4 &&
-                                          slot === 3
-                                        ? "deal-turn"
-                                        : table.boardCards.length === 5 &&
-                                          slot === 4
-                                        ? "deal-river"
-                                        : "deal-static";
-                                    return (
-                                      <div
-                                        key={`board-${slot}`}
-                                        className={`table-card deal-card ${
-                                          card ? animationClass : "deal-static"
-                                        } ${card ? "" : "card-placeholder"}`}
-                                        style={{
-                                          animationDelay:
-                                            card && animationClass !== "deal-static"
-                                              ? `${0.2 + slot * 0.15}s`
-                                              : "0s",
-                                        }}
-                                      >
-                                        {card ? formatCard(card) : ""}
-                                      </div>
-                                    );
-                                  })}
-                                  <div className="table-card back deal-static burn-slot">
-                                    {Array.from({
-                                      length: Math.min(table.burnPile.length, 3),
-                                    }).map((_, burnIndex) => (
-                                      <span
-                                        key={`burn-${burnIndex}`}
-                                        className="burn-stack-card"
-                                        style={{
-                                          transform: `translate(${
-                                            burnIndex * 3
-                                          }px, ${burnIndex * -2}px)`,
-                                        }}
-                                      />
-                                    ))}
-                                  </div>
-                                </div>
-                                <div className="table-pot">
-                                  <span>Pot</span>
-                                  <strong>
-                                    {(table.pot ?? potSize).toFixed(2)} bb
-                                  </strong>
-                                  {table.showdown && table.winningHand ? (
-                                    <span className="pot-result">
-                                      {table.winningHand}
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </div>
-                            </div>
-                            <div className="seat-ring">
-                              {seatPositions.map((item) => {
-                                const player = tablePlayers[item.seat];
-                                const showCards =
-                                  player?.inHand &&
-                                  (player?.isHero || table.showdown);
-                                return (
-                                  <div
-                                    key={item.seat}
-                                    className="seat-wrap"
-                                    style={{
-                                      "--seat-x": `${item.x}%`,
-                                      "--seat-y": `${item.y}%`,
-                                    }}
-                                  >
-                                    <div className="seat-cards">
-                                      {player?.inHand ? (
-                                        (player?.cards || []).map(
-                                          (card, cardIndex) => (
-                                            <span
-                                              key={`${card}-${cardIndex}`}
-                                              className={
-                                                showCards
-                                                  ? "mini-card"
-                                                  : "mini-card back"
-                                              }
-                                            >
-                                              {showCards ? formatCard(card) : ""}
-                                            </span>
-                                          )
-                                        )
-                                      ) : (
-                                        <span className="seat-folded">
-                                          Folded
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div
-                                      className={`seat-chip ${
-                                        player?.isHero ? "hero" : ""
-                                      } ${
-                                        player?.isVillain ? "villain" : ""
-                                      } ${
-                                        table.handWinners.includes(item.seat)
-                                          ? "winner"
-                                          : ""
-                                      }`}
-                                    >
-                                      <div className="seat-avatar">
-                                        <span>{item.seat.slice(0, 2)}</span>
-                                      </div>
-                                      <div className="seat-meta">
-                                        <span className="seat-name">
-                                          {player?.name || item.seat}
-                                        </span>
-                                        <span className="seat-stack">
-                                          {player?.stack ?? stack} bb
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {tables.map((table, index) => (
+                      <TableStage
+                        key={table.id}
+                        table={table}
+                        index={index}
+                        isActive={index === activeTableIndex}
+                        onSelect={handleSelectTable}
+                        dealTick={dealTick}
+                        seatPositions={seatPositions}
+                        stack={stack}
+                        potSize={potSize}
+                      />
+                    ))}
                   </div>
                 </div>
                 <div className="spot-strip">
@@ -2983,14 +3090,27 @@ const App = () => {
                 </label>
                 <label className="field">
                   Equity (%)
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={equity}
-                    onChange={(event) => setEquity(event.target.value)}
-                  />
+                  {heroEquityPct != null ? (
+                    <span className="equity-live" title="Computed by the equity engine from the live hand">
+                      <strong>{heroEquityPct.toFixed(1)}%</strong>
+                      <small>
+                        {liveEquity.result?.method === "exact"
+                          ? `exact · ${liveEquity.result.deals.toLocaleString()} deals`
+                          : `±${((liveEquity.result?.confidence95 ?? 0) * 100).toFixed(2)}% · ${
+                              liveEquity.result?.deals?.toLocaleString() ?? 0
+                            } sims`}
+                      </small>
+                    </span>
+                  ) : (
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={equity}
+                      onChange={(event) => setEquity(event.target.value)}
+                    />
+                  )}
                 </label>
                 <label className="field">
                   Fold equity (%)

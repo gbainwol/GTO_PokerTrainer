@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "server": "node server/index.js"
+    "server": "node server/index.js",
+    "test": "node src/engine/evaluator.test.mjs && node src/engine/equity.test.mjs && node src/engine/opponent.test.mjs",
+    "gen:strength": "node scripts/gen-hand-strength.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.0",
