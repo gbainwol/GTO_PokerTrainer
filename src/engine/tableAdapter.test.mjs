@@ -30,7 +30,14 @@ for (let h = 0; h < 500; h += 1) {
     guard += 1;
     streetsReached[STREET_NAMES[view.engine.street]] = (streetsReached[STREET_NAMES[view.engine.street]] ?? 0) + 1;
     const before = view.engine;
-    view = heroAction(view, moves[guard % moves.length], 5, { heroSeat: "UTG", style: "tag", rng });
+    // Pick from what the engine says is legal - the same contract the UI
+    // honours by disabling buttons for unavailable actions.
+    const label = { fold: "Fold", check: "Check", call: "Call", bet: "Bet", raise: "Raise" };
+    const choices = view.legal.map((a) => label[a.type]).filter(Boolean);
+    const preferred = moves[guard % moves.length];
+    const move = choices.includes(preferred) ? preferred : choices[choices.length - 1];
+    const sizing = view.legal.find((a) => a.type === "bet" || a.type === "raise");
+    view = heroAction(view, move, sizing ? sizing.min : 5, { heroSeat: "UTG", style: "tag", rng });
     if (view.engine === before) { violations += 1; break; }  // no progress
     if (Math.abs(totalChips(view.engine) - start) > 0.005) {
       violations += 1;

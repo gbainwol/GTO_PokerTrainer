@@ -205,22 +205,28 @@ export const heroAction = (view, move, sizeTo, { heroSeat, style, rng = Math.ran
   const legal = legalActions(hand);
   const has = (type) => legal.find((a) => a.type === type);
 
+  // An illegal request is ignored rather than substituted. Quietly turning a
+  // "check" into a call because the hero was facing a bet would put chips in
+  // the pot they never agreed to.
   let action;
   switch (move) {
     case "Fold":
-      action = has("fold") ? { type: "fold" } : { type: "check" };
+      if (!has("fold")) return view;
+      action = { type: "fold" };
       break;
     case "Check":
-      action = has("check") ? { type: "check" } : has("call") ? { type: "call" } : { type: "fold" };
+      if (!has("check")) return view;
+      action = { type: "check" };
       break;
     case "Call":
-      action = has("call") ? { type: "call" } : { type: "check" };
+      if (!has("call")) return view;
+      action = { type: "call" };
       break;
     case "Bet":
     case "Raise": {
-      const sizing = has("raise") ?? has("bet");
+      const sizing = move === "Bet" ? has("bet") : has("raise");
       if (!sizing) {
-        action = has("call") ? { type: "call" } : { type: "check" };
+        return view;
       } else {
         const amount = Math.min(sizing.max, Math.max(sizing.min, Number(sizeTo) || sizing.min));
         action = { type: sizing.type, amount: Math.round(amount * 100) / 100 };
@@ -228,7 +234,7 @@ export const heroAction = (view, move, sizeTo, { heroSeat, style, rng = Math.ran
       break;
     }
     default:
-      action = has("check") ? { type: "check" } : { type: "fold" };
+      return view;
   }
 
   let next = applyAction(hand, action);

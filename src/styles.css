@@ -2071,3 +2071,10 @@ body::before {
 .play-table .table-center {
   width: 100%;
 }
+
+.action-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}

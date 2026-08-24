@@ -1414,6 +1414,22 @@ const App = () => {
   // defeat the memo on TableStage.
   const handleSelectTable = useCallback((index) => setActiveTableIndex(index), []);
 
+  /**
+   * Which console buttons the engine will actually accept right now.
+   * Clicking a disabled action is a no-op in the adapter too, so the UI and
+   * the rules cannot drift apart.
+   */
+  const legalMoves = useMemo(() => {
+    const byType = new Set((activeTable.legal ?? []).map((a) => a.type));
+    return {
+      Fold: byType.has("fold"),
+      Check: byType.has("check"),
+      Call: byType.has("call"),
+      Bet: byType.has("bet"),
+      Raise: byType.has("raise"),
+    };
+  }, [activeTable.legal]);
+
   const handPlayersBySeat = useMemo(() => {
     return handPlayers.reduce((acc, player) => {
       acc[player.seat] = player;
@@ -2453,6 +2469,7 @@ const App = () => {
                           : "ghost-button action-button"
                       }
                       onClick={() => recordMove("Fold")}
+                      disabled={!legalMoves.Fold}
                     >
                       Fold
                     </button>
@@ -2463,6 +2480,7 @@ const App = () => {
                           : "ghost-button action-button"
                       }
                       onClick={() => recordMove("Call")}
+                      disabled={!legalMoves.Call}
                     >
                       Call
                     </button>
@@ -2473,6 +2491,7 @@ const App = () => {
                           : "ghost-button action-button"
                       }
                       onClick={() => recordMove("Bet")}
+                      disabled={!legalMoves.Bet}
                     >
                       Bet
                     </button>
@@ -2483,6 +2502,7 @@ const App = () => {
                           : "ghost-button action-button"
                       }
                       onClick={() => recordMove("Raise")}
+                      disabled={!legalMoves.Raise}
                     >
                       Raise
                     </button>
@@ -2493,6 +2513,7 @@ const App = () => {
                           : "ghost-button action-button"
                       }
                       onClick={() => recordMove("Check")}
+                      disabled={!legalMoves.Check}
                     >
                       Check
                     </button>
