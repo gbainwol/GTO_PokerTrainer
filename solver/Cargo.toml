@@ -1,0 +1,11 @@
+[package]
+name = "gto-solver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread"] }
+uuid = { version = "1.10", features = ["v4"] }

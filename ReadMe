@@ -1,1 +1,24 @@
-adsfasdf
+# GTO Poker Trainer
+
+React-based scaffold for a competitive GTO training suite with configurable
+games, random scenarios, preflop charts, and an EV calculator.
+
+## Run locally
+
+```bash
+npm install
+npm run dev
+```
+
+## What's included
+
+- Game settings for player count and stack depth
+- Random scenario generator with position and texture cues
+- Preflop chart library and lesson queue
+- EV calculator for call, bet, and raise math
+
+## Next steps
+
+- Replace sample data with real solver outputs and range matrices
+- Add user accounts, session tracking, and analytics
+- Build advanced drill flows (timed, streak-based, adaptive difficulty)
