@@ -1,7 +1,16 @@
+//! Preflop/postflop advice service.
+//!
+//! NOTE: this is a hand-strength *heuristic*, not a solver. It previously
+//! reported its engine as "MCCFR (External Sampling)", but there is no
+//! counterfactual regret minimisation here - no regret tables, no iterations,
+//! no strategy averaging, just `estimate_strength` feeding `build_action_mix`.
+//! The real equilibrium solver is CFR+ in src/engine/solver.js, which runs in
+//! the browser and reports its exploitability.
+
 use axum::{
     extract::State,
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -245,10 +254,13 @@ async fn health() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({ "ok": true })))
 }
 
+// Returns `Response` rather than `impl IntoResponse`: the error branch yields
+// Json<Value> and the success branch Json<SolveResponse>, which are different
+// types. That mismatch meant this service had never compiled.
 async fn solve(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SolveRequest>,
-) -> impl IntoResponse {
+) -> Response {
     let request_id = payload
         .hand_id
         .unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -257,25 +269,25 @@ async fn solve(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "Pot size must be non-negative" })),
-        );
+        ).into_response();
     }
     if payload.hero_cards.len() != 2 {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "Hero cards must contain exactly two entries" })),
-        );
+        ).into_response();
     }
     if payload.board.len() > 5 {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "Board cannot exceed five cards" })),
-        );
+        ).into_response();
     }
     if payload.players < 2 {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "Players must be at least 2" })),
-        );
+        ).into_response();
     }
 
     let hero: Vec<Card> = payload
@@ -293,7 +305,7 @@ async fn solve(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "Card format must be like As, Kd, Tc, 7h" })),
-        );
+        ).into_response();
     }
 
     if hero.len() != 2
@@ -307,7 +319,7 @@ async fn solve(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "Invalid or duplicate cards in request" })),
-        );
+        ).into_response();
     }
 
     let strength = estimate_strength(&hero, &board, payload.players);
@@ -338,13 +350,13 @@ async fn solve(
         notes,
     };
 
-    (StatusCode::OK, Json(response))
+    (StatusCode::OK, Json(response)).into_response()
 }
 
 #[tokio::main]
 async fn main() {
     let state = Arc::new(AppState {
-        engine: "MCCFR (External Sampling)".to_string(),
+        engine: "Heuristic (hand-strength estimate)".to_string(),
     });
 
     let app = Router::new()

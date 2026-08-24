@@ -245,17 +245,14 @@ const TOURNAMENT_FORMATS = [
   "Satellite",
 ];
 
+/**
+ * Engines the app can actually run. The previous list named ten CFR variants
+ * (Deep CFR, Discounted CFR, Outcome Sampling...) none of which existed - the
+ * remote service is a hand-strength heuristic regardless of what was selected.
+ */
 const SOLVER_ENGINES = [
-  "MCCFR (External Sampling)",
-  "CFR",
-  "CFR+",
-  "Deep CFR",
-  "MCCFR",
-  "Chance Sampling",
-  "External Sampling",
-  "Discounted CFR",
-  "Outcome Sampling",
-  "Public Sampling",
+  "CFR+ (local, exact river)",
+  "Heuristic (remote service)",
 ];
 
 const ACTION_ORDER_MODES = [
@@ -562,9 +559,7 @@ const App = () => {
   const [tables, setTables] = useState([]);
   const [hasAntes, setHasAntes] = useState(false);
   const [hasStraddles, setHasStraddles] = useState(false);
-  const [solverEngine, setSolverEngine] = useState(
-    "MCCFR (External Sampling)"
-  );
+  const [solverEngine, setSolverEngine] = useState(SOLVER_ENGINES[0]);
   const [actionOrderMode, setActionOrderMode] = useState("perStreet");
   const [skillMode, setSkillMode] = useState("Beginner");
   const [enableAdvancedMetrics, setEnableAdvancedMetrics] = useState(false);
@@ -1517,8 +1512,8 @@ const App = () => {
    *
    * On a complete board this runs the local CFR+ solver, which returns a real
    * equilibrium mix plus the exploitability of the solve. Earlier streets still
-   * go to the remote service - note that service reports itself as MCCFR but
-   * implements a hand-strength heuristic, so treat its output accordingly.
+   * go to the remote service, which is a hand-strength heuristic rather than
+   * a solver - it now reports itself as such.
    */
   const requestSolverAdvice = async () => {
     const heroPlayer = handPlayers.find((player) => player.isHero);
