@@ -1,7 +1,8 @@
 # GTO Poker Trainer
 
-React-based scaffold for a competitive GTO training suite with configurable
-games, random scenarios, preflop charts, and an EV calculator.
+A Texas Hold'em simulator and trainer built on a validated math engine: an
+exact hand evaluator, an adaptive equity calculator, opponents that play off
+pot odds, and a CFR+ river solver that reports its own exploitability.
 
 ## Run locally
 
@@ -10,15 +11,84 @@ npm install
 npm run dev
 ```
 
-## What's included
+```bash
+npm test
+```
 
-- Game settings for player count and stack depth
-- Random scenario generator with position and texture cues
-- Preflop chart library and lesson queue
-- EV calculator for call, bet, and raise math
+The test suite is the point of this project — every claim below is checked by
+it. Run it before trusting any number the UI shows you.
 
-## Next steps
+## The engine
 
-- Replace sample data with real solver outputs and range matrices
-- Add user accounts, session tracking, and analytics
-- Build advanced drill flows (timed, streak-based, adaptive difficulty)
+Everything in `src/engine/` is pure computation with no DOM dependency, so it
+runs identically on the main thread, in a Web Worker, or under Node.
+
+| Module | What it does |
+| --- | --- |
+| [`evaluator.js`](src/engine/evaluator.js) | 5–7 card hand evaluation, ~59M hands/sec |
+| [`equity.js`](src/engine/equity.js) | Exact enumeration when tractable, seeded Monte Carlo otherwise |
+| [`range.js`](src/engine/range.js) | Range notation (`TT+`, `A5s+`, `22-55`, weights) → concrete combos |
+| [`handStrength.js`](src/engine/handStrength.js) | 169 starting hands ranked by measured equity (generated) |
+| [`opponent.js`](src/engine/opponent.js) | Bot decisions from equity vs pot odds |
+| [`solver.js`](src/engine/solver.js) | CFR+ river solver, range vs range |
+
+Cards are integers (`rank * 4 + suit`) on every hot path; strings are only for
+display.
+
+### Validation
+
+The engine is checked against external ground truth, not against itself:
+
+- **Evaluator** — all 2,598,960 five-card hands produce the textbook category
+  frequencies (40 straight flushes, 624 quads, … 1,302,540 high cards), and
+  30k random seven-card hands match an independently written brute-force
+  reference on both classification and pairwise ordering.
+- **Equity** — matches published all-in equities: AA vs KK 81.95%, AKs vs QQ
+  46.21%, AKo vs 22 46.96%, AKo vs AQo 74.39% (suit-averaged), AA vs a random
+  hand 85.09%. Monte Carlo lands within its own reported error bars of the
+  exact answer.
+- **Solver** — terminal values match a brute-force O(n·m) reference to 6e-14
+  including exact card removal; exploitability falls from 2.3% to 0.03% of pot
+  over 10 → 800 iterations; and the polarized-vs-bluffcatcher toy game
+  reproduces its known analytic equilibrium (with a pot-sized bet the
+  bluffcatcher calls 50.0% and the polarized player bluffs 50.0% of its air,
+  matching P/(P+B)).
+
+### Exploitability, not vibes
+
+The solver reports how far from equilibrium a solve actually is, so its output
+can be judged rather than taken on faith. A realistic river spot (128 vs 159
+combos, 33 nodes) solves to **0.56% of pot exploitable in ~32ms**. Solving runs
+in a worker; the table stays interactive.
+
+## What is real and what is not
+
+This codebase previously advertised capabilities it did not have, so to be
+explicit:
+
+- **Real:** hand evaluation, equity, ranges, opponent decisions, and the river
+  solver. All covered by `npm test`.
+- **Heuristic:** the Rust service in `solver/` is a hand-strength estimate. It
+  reports itself as such. It is *not* a CFR solver, despite once claiming to be
+  "MCCFR (External Sampling)".
+- **Not implemented:** turn and flop solving. Those need chance nodes over
+  runouts; only complete boards are solved exactly today.
+
+## Regenerating derived data
+
+`src/engine/handStrength.js` is generated, not hand-written:
+
+```bash
+npm run gen:strength
+```
+
+## Layout
+
+```
+src/engine/      math: evaluator, equity, ranges, opponents, solver (+ workers)
+src/components/  SVG playing cards
+src/utils/       thin compatibility shims over the engine
+server/          Express + SQLite session and analytics store
+solver/          Rust advice service (heuristic)
+scripts/         data generators
+```
