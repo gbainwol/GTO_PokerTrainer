@@ -1,0 +1,120 @@
+/* Playing cards. Sized by a single custom property so callers scale one value. */
+
+.pcard {
+  --pcard-w: 58px;
+  width: var(--pcard-w);
+  height: calc(var(--pcard-w) * 1.4);
+  display: block;
+  border-radius: calc(var(--pcard-w) * 0.09);
+  flex: 0 0 auto;
+  /* Promote to its own layer: dealing animates many cards at once. */
+  will-change: transform;
+}
+
+.pcard-sm { --pcard-w: 40px; }
+.pcard-md { --pcard-w: 58px; }
+.pcard-lg { --pcard-w: 76px; }
+
+.pcard-face,
+.pcard-back {
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
+}
+
+.pcard-bg {
+  fill: #fbfbf7;
+  stroke: rgba(0, 0, 0, 0.28);
+  stroke-width: 1.5;
+}
+
+/* Suit colour drives every pip and index in the card via currentColor. */
+.pcard-red { color: #d1344b; }
+.pcard-black { color: #1e2129; }
+
+.pcard-face path { fill: currentColor; }
+
+.card-index {
+  fill: currentColor;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 26px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.card-court-frame {
+  fill: rgba(0, 0, 0, 0.04);
+  stroke: currentColor;
+  stroke-width: 1.5;
+  opacity: 0.75;
+}
+
+.card-court-letter {
+  fill: currentColor;
+  font-family: "Bevan", Georgia, serif;
+  font-size: 26px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+/* --- Back ---------------------------------------------------------------- */
+
+.pcard-back-base {
+  fill: #1d2440;
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 1.5;
+}
+
+.pcard-back-inner {
+  fill: #2a3560;
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 1;
+}
+
+.pcard-back-pattern {
+  fill: none;
+  stroke: rgba(150, 180, 255, 0.35);
+  stroke-width: 1.4;
+}
+
+/* --- States -------------------------------------------------------------- */
+
+.pcard-empty {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  box-sizing: border-box;
+}
+
+.pcard-dimmed {
+  opacity: 0.4;
+  filter: grayscale(0.7);
+}
+
+.pcard-highlight {
+  outline: 2px solid #f6c453;
+  outline-offset: 2px;
+  border-radius: calc(var(--pcard-w) * 0.09);
+  filter: drop-shadow(0 0 10px rgba(246, 196, 83, 0.55));
+}
+
+/* --- Dealing ------------------------------------------------------------- */
+
+@keyframes pcard-deal {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -22px, 0) scale(0.86) rotate(-4deg);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+  }
+}
+
+.pcard-deal {
+  animation: pcard-deal 260ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pcard-deal {
+    animation: none;
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "trainer", "runtimeExecutable": "npx", "runtimeArgs": ["vite", "--port", "5199"], "port": 5199 }
+  ]
+}
