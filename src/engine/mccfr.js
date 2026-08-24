@@ -233,6 +233,33 @@ export const evaluateStrategy = (game, store, { samples = 20000, seed = 0xfeed }
  * standard error and makes no equilibrium-distance claim.
  */
 
+/**
+ * How well trained the solve actually is.
+ *
+ * A strategy is only meaningful at information sets the solver visited enough
+ * times to learn something; the rest still hold their initial uniform mix.
+ * Six-max preflop has ~100k information sets, so a solve that looks finished
+ * can be mostly untrained noise - at 20k iterations the learned "opening
+ * range" ranked Q7s above JTs. Reporting this makes that visible instead of
+ * letting it masquerade as strategy.
+ */
+export const trainingQuality = (store, { minVisits = 30 } = {}) => {
+  const visits = [];
+  for (const node of store.values()) visits.push(node.visits);
+  if (visits.length === 0) return { infoSets: 0, median: 0, undertrained: 1, minVisits };
+  visits.sort((a, b) => a - b);
+  const median = visits[Math.floor(visits.length / 2)];
+  const weak = visits.filter((v) => v < minVisits).length;
+  return {
+    infoSets: visits.length,
+    median,
+    p10: visits[Math.floor(visits.length * 0.1)],
+    total: visits.reduce((a, b) => a + b, 0),
+    undertrained: weak / visits.length,
+    minVisits,
+  };
+};
+
 /** Readable dump of the solved strategy, for tests and debugging. */
 export const describeStrategy = (store, { minVisits = 0, limit = Infinity } = {}) => {
   const average = averageStrategy(store);
