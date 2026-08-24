@@ -21,6 +21,7 @@ import { DEFAULT_STYLE } from "./engine/opponent";
 import { startHand, heroAction } from "./engine/tableAdapter";
 import { useEquity } from "./engine/useEquity";
 import { useSolver, DEFAULT_OOP_RANGE, DEFAULT_IP_RANGE } from "./engine/useSolver";
+import { usePreflopSolver } from "./engine/usePreflopSolver";
 import Card from "./components/Card.jsx";
 
 /** Skill mode picks how the bots play, not how strong the hero's cards are. */
@@ -652,6 +653,7 @@ const App = () => {
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [sessionStartedAt, setSessionStartedAt] = useState(null);
   const solver = useSolver();
+  const preflopSolver = usePreflopSolver();
   const [solverAdvice, setSolverAdvice] = useState(null);
   const [solverError, setSolverError] = useState(null);
   const [solverLoading, setSolverLoading] = useState(false);
@@ -1419,6 +1421,11 @@ const App = () => {
    * Clicking a disabled action is a no-op in the adapter too, so the UI and
    * the rules cannot drift apart.
    */
+  /** Whichever solver is currently running, and how far along it is. */
+  const solveBusy =
+    solverLoading || solver.status === "solving" || preflopSolver.status === "solving";
+  const solveProgress = solver.progress ?? preflopSolver.progress ?? null;
+
   const legalMoves = useMemo(() => {
     const byType = new Set((activeTable.legal ?? []).map((a) => a.type));
     return {
@@ -1542,6 +1549,52 @@ const App = () => {
               ? " (exact tree)"
               : " within the sampled runouts, so the true figure is higher"}` +
             ` (${solved.elapsedMs}ms).`,
+        });
+      } catch (error) {
+        setSolverError(error.message);
+      }
+      return;
+    }
+
+    // Preflop is multiway, which the heads-up vector solver cannot model at
+    // all. MCCFR over the betting engine can, so it handles this street.
+    if (boardCards.length === 0) {
+      setSolverError(null);
+      try {
+        const live = handPlayers.filter((p) => p.inHand);
+        const solved = await preflopSolver.solve({
+          seats: live.map((p) => p.seat),
+          buttonIndex: Math.max(0, live.findIndex((p) => p.seat === "BTN")),
+          heroSeat,
+          heroCards: heroPlayer.cards.map(cardToInt),
+          stack: Number(heroPlayer.stack ?? stack),
+          smallBlind: 0.5,
+          bigBlind: 1,
+        });
+        if (solved.applicable === false) {
+          setSolverAdvice(null);
+          setSolverError(solved.reason);
+          return;
+        }
+        const hero = solved.hero ?? {};
+        const mix = [
+          { action: "Fold", frequency: hero.fold ?? 0, ev: null },
+          { action: "All-in", frequency: hero.shove ?? 0, ev: null },
+        ];
+        const heroEv = solved.seatEv.find((e) => e.seat === heroSeat);
+        setSolverAdvice({
+          best_action: (hero.shove ?? 0) >= (hero.fold ?? 0) ? "All-in" : "Fold",
+          ev: heroEv ? heroEv.evBB : 0,
+          action_mix: mix,
+          notes:
+            `MCCFR push/fold, ${solved.players}-handed at ${solved.stackBB}bb: ` +
+            `${hero.code ?? "?"} shoves ${(100 * (hero.shove ?? 0)).toFixed(0)}%. ` +
+            `${solved.iterations.toLocaleString()} iterations over ` +
+            `${solved.infoSets.toLocaleString()} information sets, ` +
+            `${(solved.undertrained * 100).toFixed(0)}% undertrained` +
+            `${solved.cached ? ", cached" : ` (${solved.elapsedMs}ms)`}. ` +
+            `Postflop is checked down, so this is a short-stack model.`,
+          seatEv: solved.seatEv,
         });
       } catch (error) {
         setSolverError(error.message);
@@ -2616,7 +2669,7 @@ const App = () => {
                         ? "CFR+ (exact turn)"
                         : boardCards.length === 3
                         ? "CFR+ (flop, sampled runouts)"
-                        : solverEngine}
+                        : "MCCFR (multiway push/fold)"}
                     </span>
                   </div>
                   <p className="solver-copy">
@@ -2626,12 +2679,12 @@ const App = () => {
                     <button
                       className="secondary-button"
                       onClick={requestSolverAdvice}
-                      disabled={solverLoading || solver.status === "solving"}
+                      disabled={solveBusy}
                     >
-                      {solverLoading || solver.status === "solving"
-                        ? solver.progress
+                      {solveBusy
+                        ? solveProgress
                           ? `Solving ${Math.round(
-                              (solver.progress.iteration / solver.progress.iterations) * 100
+                              (solveProgress.iteration / solveProgress.iterations) * 100
                             )}%`
                           : "Solving..."
                         : "Request Mix"}
@@ -2639,7 +2692,7 @@ const App = () => {
                     <button
                       className="ghost-button"
                       onClick={() => setSolverAdvice(null)}
-                      disabled={solverLoading || solver.status === "solving"}
+                      disabled={solveBusy}
                     >
                       Clear
                     </button>
